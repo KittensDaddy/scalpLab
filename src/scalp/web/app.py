@@ -98,7 +98,7 @@ def storage_validate(req:StoragePathRequest):
 def storage_migrate(req:StoragePathRequest):
     producing=any(v.get("status")=="RUNNING" for v in jobs.values()) or bool(shadow_task and not shadow_task.done()) or RecorderControlStore().status().get("state")=="RECORDING"
     try: return runtime_roots.migrate(req.path,jobs_running=producing)
-    except (ValueError,RuntimeError) as e: raise HTTPException(409,str(e))
+    except (ValueError,RuntimeError,OSError) as e: raise HTTPException(409,str(e))
 
 @app.get("/api/strategies")
 def strategies_list(): return {"strategies":StrategyVersionStore().list(),"feature_registry":__import__('scalp.strategy_rules',fromlist=['FEATURES']).FEATURES}

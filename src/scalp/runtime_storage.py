@@ -107,15 +107,26 @@ class RuntimeRootManager:
             dest = Path(check["path"])
             if dest == source:
                 return {"status": "UNCHANGED", "runtime_root": str(source)}
-            stage = dest.parent / f".{dest.name}.scalp-staging"
-            if stage.exists():
-                shutil.rmtree(stage)
-            shutil.copytree(source, stage, copy_function=shutil.copy2)
-            self._verify(source, stage)
-            if dest.exists() and any(dest.iterdir()):
-                raise RuntimeError("destination must be empty")
-            if dest.exists(): dest.rmdir()
-            os.replace(stage, dest)
+            # The caller may have write access to a mounted destination but not
+            # its parent (for example /data/binance but not /data). Stage inside
+            # the directory whose write access we actually validated.
+            stage = dest / ".scalp-staging"
+            existing = list(dest.iterdir()) if dest.exists() else []
+            if existing:
+                if existing == [stage]:
+                    shutil.rmtree(stage)  # recover an interrupted prior attempt
+                else:
+                    raise RuntimeError("destination must be empty")
+            try:
+                shutil.copytree(source, stage, copy_function=shutil.copy2)
+                self._verify(source, stage)
+                # Activation happens only after the complete staged tree passes
+                # file inventory and SQLite integrity verification.
+                for child in list(stage.iterdir()):
+                    os.replace(child, dest / child.name)
+                stage.rmdir()
+            except OSError as exc:
+                raise RuntimeError(f"storage migration failed: {exc}") from exc
             self.pointer.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.pointer.with_suffix(".tmp")
             tmp.write_text(json.dumps({"runtime_root": str(dest)}, indent=2))

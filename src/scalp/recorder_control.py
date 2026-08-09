@@ -48,6 +48,9 @@ class RecorderControlStore:
 async def recorder_daemon(poll_seconds=1.0):
     store=RecorderControlStore(); recorder=None; task=None; store.heartbeat("IDLE")
     while True:
+        # Resolve the control database again so an atomic runtime-root switch
+        # cannot leave this long-lived daemon polling the retired location.
+        store=RecorderControlStore()
         cmd=store.next_command()
         if cmd:
             try:

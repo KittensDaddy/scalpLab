@@ -30,10 +30,11 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 scalp selftest
-scalp serve --host 0.0.0.0 --port 8080
+./run.sh
 ```
 
-Open `http://SERVER_IP:8080`.
+Open `http://SERVER_IP:1120`. The convenience script starts both the Web UI
+and the independent recorder daemon; stopping the script stops both processes.
 
 ### Historical exact-range backtest
 
