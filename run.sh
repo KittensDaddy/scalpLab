@@ -6,4 +6,4 @@ if [[ ! -d .venv ]]; then python3 -m venv .venv; fi
 . .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e .
-exec scalp serve --host 0.0.0.0 --port 8080
+exec scalp serve --host 0.0.0.0 --port 1120
