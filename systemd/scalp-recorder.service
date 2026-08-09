@@ -1,0 +1,20 @@
+[Unit]
+Description=ScalpLab Binance market-data recorder
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=scalp
+WorkingDirectory=/opt/scalplab
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/scalplab/.venv/bin/scalp record
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=20
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

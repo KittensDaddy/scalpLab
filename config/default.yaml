@@ -1,0 +1,79 @@
+data:
+  interval: 5m
+  lookback_days: 14
+  cache_dir: data/cache
+  request_timeout: 15
+  request_pause_seconds: 0.12
+
+strategies:
+  enabled: [TC, LC, LSR, RB, VB, TR]
+  min_score: 68
+  min_separation: 10
+  min_evidence_agreement: 45
+  min_expected_r: 1.15
+
+risk:
+  initial_equity: 10000
+  normal_risk_pct: 0.50
+  c_mode_risk_pct: 0.25
+  max_symbol_risk_pct: 0.75
+  max_total_open_risk_pct: 2.00
+  max_same_direction_beta_risk_pct: 1.25
+  correlation_threshold: 0.70
+  correlated_risk_multiplier: 0.50
+  max_position_notional_pct: 100.0
+
+execution:
+  maker_fee_bps: 2.0
+  taker_fee_bps: 5.0
+  market_slippage_bps: 1.5
+  aggressive_slippage_bps: 0.6
+  passive_offset_bps: 0.5
+  passive_ttl_bars: 2
+  default_spread_bps: 1.0
+  stop_first_on_ambiguous_bar: true
+  max_hold_bars: 12
+
+backtest:
+  tp1_r: 1.0
+  tp1_fraction: 0.50
+  move_stop_to_breakeven_after_tp1: true
+  seed: 42
+  abort_below_microstructure_coverage_pct: 90
+  exclude_gap_periods: true
+
+storage:
+  state_dir: data/state
+  bulk_dir: /data/scalp
+  fallback_bulk_dir: data/bulk
+  raw_segment_seconds: 60
+  feature_segment_seconds: 300
+  ram_buffer_events: 10000
+  raw_l2_retention_days: 30
+  warning_pct: 80
+  pressure_pct: 90
+  emergency_pct: 95
+
+live:
+  futures_ws_base: wss://fstream.binance.com/stream
+  spot_ws_base: wss://stream.binance.com:9443/stream
+  futures_rest_base: https://fapi.binance.com
+  spot_rest_base: https://api.binance.com
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+  full_l2_symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+  depth_levels: 1000
+  depth_speed: 100ms
+  feature_snapshot_ms: 1000
+  heartbeat_seconds: 5
+  reconnect_max_seconds: 60
+  oi_poll_seconds: 60
+  funding_poll_seconds: 300
+  record_spot_depth: false
+  record_force_orders: true
+
+shadow:
+  enabled: false
+  interval: 1m
+  seed_lookback_bars: 120
+  persist_path: results/shadow.db
+  max_signals_per_symbol: 1

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>ScalpLab — Crypto Research Terminal</title>
+  <link rel="stylesheet" href="/static/app.css"/>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><div class="brandmark">S</div><div><b>ScalpLab</b><span>Research Terminal</span></div></div>
+    <nav id="nav">
+      <button class="nav active" data-page="overview"><i>◈</i> Overview</button>
+      <button class="nav" data-page="backtest"><i>⌁</i> Backtest</button>
+      <button class="nav" data-page="recorder"><i>●</i> Live Recorder</button>
+      <button class="nav" data-page="shadow"><i>◇</i> Shadow Trading</button>
+      <button class="nav" data-page="integrity"><i>✓</i> Data Integrity</button>
+      <button class="nav" data-page="storage"><i>▣</i> Storage</button>
+      <button class="nav" data-page="history"><i>↺</i> Run History</button>
+    </nav>
+    <div class="safety"><span></span><div><b>Research mode</b><small>Live-money execution disabled</small></div></div>
+  </aside>
+
+  <main>
+    <header><div><h1 id="pageTitle">Overview</h1><p id="pageSub">System status, data quality and research readiness.</p></div><div class="header-actions"><span class="pill" id="apiStatus">API checking</span><button class="ghost" id="refreshAll">Refresh</button></div></header>
+
+    <section class="page active" id="page-overview">
+      <div class="hero">
+        <div><span class="eyebrow">SCALPLAB 0.2</span><h2>One engine.<br/><em>Three realities.</em></h2><p>Backtest historical Binance data, record live microstructure, and shadow-test the exact same deterministic strategy engine.</p></div>
+        <div class="pipeline"><div><b>BACKTEST</b><span>Historical</span></div><strong>→</strong><div><b>REPLAY</b><span>Recorded L2</span></div><strong>→</strong><div><b>SHADOW</b><span>Live paper</span></div></div>
+      </div>
+      <div class="stat-grid">
+        <article><label>Recorder</label><strong id="ovRecorder">—</strong><small>Binance Futures + Spot</small></article>
+        <article><label>Book quality</label><strong id="ovBook">—</strong><small>Full-L2 symbols</small></article>
+        <article><label>Storage</label><strong id="ovStorage">—</strong><small id="ovStorageSub">—</small></article>
+        <article><label>Data gaps</label><strong id="ovGaps">—</strong><small>Recent integrity records</small></article>
+      </div>
+      <div class="grid2">
+        <article class="panel"><div class="panel-head"><div><span class="eyebrow">STRATEGIES</span><h3>Decision engine</h3></div><span class="badge good">6 enabled</span></div><div class="strategy-row" id="overviewStrategies"></div></article>
+        <article class="panel"><div class="panel-head"><div><span class="eyebrow">SYSTEM</span><h3>Health checks</h3></div><button class="small" id="doctorBtn">Run doctor</button></div><div id="doctorList" class="check-list muted">Run doctor to verify network, storage and recorder dependencies.</div></article>
+      </div>
+    </section>
+
+    <section class="page" id="page-backtest">
+      <div class="grid-form">
+        <article class="panel controls">
+          <div class="panel-head"><div><span class="eyebrow">MARKET</span><h3>Backtest configuration</h3></div><span class="badge">Binance USD-M</span></div>
+          <label>Symbols <input id="btSymbols" value="BTCUSDT, ETHUSDT, SOLUSDT"/></label>
+          <div class="form2"><label>Start time <input id="btStart" type="datetime-local"/></label><label>End time <input id="btEnd" type="datetime-local"/></label></div>
+          <div class="form2"><label>Timeframe <select id="btInterval"><option>1m</option><option>3m</option><option selected>5m</option><option>15m</option><option>30m</option><option>1h</option></select></label><label>Starting equity <input id="btEquity" type="number" value="10000"/></label></div>
+          <label>Strategies</label><div class="checks" id="strategyChecks"></div>
+          <details><summary>Advanced risk & execution</summary><div class="form2"><label>Risk / trade % <input id="btRisk" type="number" step="0.05" value="0.5"/></label><label>Max open risk % <input id="btMaxRisk" type="number" step="0.25" value="2"/></label><label>Min score <input id="btScore" type="number" value="68"/></label><label>Min separation <input id="btSep" type="number" value="10"/></label><label>Maker fee bps <input id="btMaker" type="number" step="0.1" value="2"/></label><label>Taker fee bps <input id="btTaker" type="number" step="0.1" value="5"/></label></div><label class="inline-check"><input id="btTune" type="checkbox"/> Walk-forward: tune signal thresholds on past folds, then freeze them on future test folds</label></details>
+          <div class="action-row"><button class="primary" id="runBacktest">Run backtest</button><button id="runReplay">Replay local L2</button><button id="runWalk">Walk-forward</button></div>
+          <div class="job" id="jobState"><span></span><div><b>Ready</b><small>Select a period and run.</small></div></div>
+        </article>
+        <article class="panel results"><div class="panel-head"><div><span class="eyebrow">RESULTS</span><h3 id="resultTitle">No run selected</h3></div><span class="badge" id="dataModeBadge">—</span></div>
+          <div class="metrics" id="metrics"></div><canvas id="equityChart" height="220"></canvas>
+          <div class="tabs"><button class="active" data-rpanel="strategy">By strategy</button><button data-rpanel="regime">By regime</button><button data-rpanel="direction">Long / Short</button><button data-rpanel="folds">WF folds</button><button data-rpanel="trades">Trades</button><button data-rpanel="noTrade">No trade</button></div>
+          <div id="resultTable" class="table-wrap muted">Results will appear here.</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="page" id="page-recorder">
+      <div class="grid2">
+        <article class="panel"><div class="panel-head"><div><span class="eyebrow">LIVE DATA</span><h3>Recorder control</h3></div><span class="badge" id="recBadge">STOPPED</span></div>
+          <label>Tracked symbols <input id="recSymbols" value="BTCUSDT, ETHUSDT, SOLUSDT"/></label><label>Full L2 symbols <input id="recL2" value="BTCUSDT, ETHUSDT, SOLUSDT"/></label>
+          <div class="action-row"><button class="primary" id="recStart">Start recorder</button><button class="danger" id="recStop">Stop safely</button></div>
+          <p class="note">Restart recovery always resnapshots the order book. Missing intervals remain recorded as gaps.</p>
+        </article>
+        <article class="panel"><div class="panel-head"><div><span class="eyebrow">STREAMS</span><h3>Connection health</h3></div><span class="pulse"></span></div><div id="streamHealth" class="check-list muted">Recorder not running.</div></article>
+      </div>
+      <article class="panel"><div class="panel-head"><div><span class="eyebrow">MICROSTRUCTURE</span><h3>Latest feature snapshots</h3></div><span class="badge">1s derived</span></div><div id="featureCards" class="feature-grid muted">No live features yet.</div></article>
+    </section>
+
+    <section class="page" id="page-shadow">
+      <div class="grid2"><article class="panel"><div class="panel-head"><div><span class="eyebrow">NO REAL ORDERS</span><h3>Live shadow engine</h3></div><span class="badge" id="shadowBadge">STOPPED</span></div><p>Uses the shared strategy engine on live data. When healthy recorder features exist, LC/LSR/TR can evaluate their microstructure requirements.</p><div class="action-row"><button class="primary" id="shadowStart">Start shadow</button><button class="danger" id="shadowStop">Stop</button></div></article><article class="panel"><div class="panel-head"><div><span class="eyebrow">PAPER LEDGER</span><h3>Recent decisions</h3></div></div><div id="shadowTable" class="table-wrap muted">No shadow decisions yet.</div></article></div>
+    </section>
+
+    <section class="page" id="page-integrity">
+      <article class="panel"><div class="panel-head"><div><span class="eyebrow">TRUST</span><h3>Data integrity timeline</h3></div><button class="small" id="integrityRefresh">Refresh</button></div><div class="integrity-summary" id="integritySummary"></div><div id="gapTable" class="table-wrap"></div></article>
+    </section>
+
+    <section class="page" id="page-storage">
+      <div class="grid2"><article class="panel"><div class="panel-head"><div><span class="eyebrow">DISK</span><h3>Bulk market data</h3></div><span id="storageLevel" class="badge">—</span></div><div class="disk"><div id="diskBar" class="disk-fill"></div></div><div id="storageDetail"></div></article><article class="panel"><div class="panel-head"><div><span class="eyebrow">RETENTION</span><h3>Raw L2 policy</h3></div></div><p>Raw L2 rotates by policy. Derived features and preserved setup windows are retained longer.</p><button id="prunePreview">Preview retention cleanup</button><pre id="pruneResult" class="code"></pre></article></div>
+    </section>
+
+    <section class="page" id="page-history"><article class="panel"><div class="panel-head"><div><span class="eyebrow">REPRODUCIBILITY</span><h3>Saved runs</h3></div><button class="small" id="historyRefresh">Refresh</button></div><div id="historyTable" class="table-wrap"></div></article></section>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body></html>
