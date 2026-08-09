@@ -10,6 +10,7 @@ class ChunkWriter:
         self.root=Path(root); self.root.mkdir(parents=True,exist_ok=True)
         self.session_id=session_id; self.integrity=integrity; self.segment_seconds=segment_seconds; self.max_events=max_events; self.source=source
         self.buffers={}; self.started={}
+        self.files_written=0; self.bytes_written=0; self.last_write_ms=None
 
     def add(self,event:dict):
         key=(event.get("market","unknown"),event.get("symbol","GLOBAL"),event.get("event_type","event"))
@@ -27,8 +28,13 @@ class ChunkWriter:
                 for row in rows: gz.write((json.dumps(row,separators=(",",":"),default=str)+"\n").encode())
             raw.flush(); os.fsync(raw.fileno())
         os.replace(tmp,final)
+        size=final.stat().st_size; self.files_written+=1; self.bytes_written+=size; self.last_write_ms=int(time.time()*1000)
         self.integrity.register_coverage(self.source,symbol,etype,start,end,"HEALTHY",self.session_id,str(final),len(rows))
         self.buffers[key]=[]; self.started[key]=time.time(); return final
+
+    def stats(self):
+        buffered=sum(len(x) for x in self.buffers.values())
+        return {"root":str(self.root),"files_written":self.files_written,"bytes_written":self.bytes_written,"last_write_ms":self.last_write_ms,"buffered_events":buffered,"buffer_capacity_per_stream":self.max_events,"max_stream_buffer_utilization_pct":max((len(x)/self.max_events*100 for x in self.buffers.values()),default=0)}
 
     def flush_all(self):
         return [self.flush_key(k) for k in list(self.buffers)]

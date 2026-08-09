@@ -45,8 +45,20 @@ class RecorderControlStore:
         age=time.time()-row[0]; payload=json.loads(row[3]); return {"running":age<15 and row[2] != "STOPPED","state":row[2],"stale":age>=15,"age_seconds":age,"pid":row[1],**payload}
 
 
-async def recorder_daemon(poll_seconds=1.0):
-    store=RecorderControlStore(); recorder=None; task=None; store.heartbeat("IDLE")
+def configured_recorder(payload: dict | None = None) -> BinanceLiveRecorder:
+    """Build the recorder used at daemon boot and by later Web start commands."""
+    cfg=load_config(); raw=cfg.model_dump(); payload=payload or {}
+    raw["live"]["symbols"]=[x.upper() for x in payload.get("symbols",raw["live"]["symbols"])]
+    full=[x.upper() for x in payload.get("full_l2_symbols",raw["live"]["full_l2_symbols"])]
+    if len(full)>4: raise ValueError("full L2 is capped at four symbols")
+    raw["live"]["full_l2_symbols"]=full
+    return BinanceLiveRecorder(AppConfig.model_validate(raw))
+
+
+async def recorder_daemon(poll_seconds=1.0,auto_start=True):
+    store=RecorderControlStore(); recorder=configured_recorder() if auto_start else None
+    task=asyncio.create_task(recorder.start(),name="automatic_live_recorder") if recorder else None
+    paused=False; store.heartbeat("RECORDING" if task else "IDLE",{"recorder":getattr(recorder,"health",None)})
     while True:
         # Resolve the control database again so an atomic runtime-root switch
         # cannot leave this long-lived daemon polling the retired location.
@@ -56,19 +68,22 @@ async def recorder_daemon(poll_seconds=1.0):
             try:
                 if cmd["action"] == "start":
                     if task and not task.done(): recorder.stop(); await asyncio.wait_for(task, timeout=15)
-                    cfg=load_config(); raw=cfg.model_dump(); payload=cmd["payload"]
-                    raw["live"]["symbols"]=[x.upper() for x in payload.get("symbols",raw["live"]["symbols"])]
-                    full=[x.upper() for x in payload.get("full_l2_symbols",raw["live"]["full_l2_symbols"])]
-                    if len(full)>4: raise ValueError("full L2 is capped at four symbols")
-                    raw["live"]["full_l2_symbols"]=full; recorder=BinanceLiveRecorder(AppConfig.model_validate(raw)); task=asyncio.create_task(recorder.start())
+                    recorder=configured_recorder(cmd["payload"]); task=asyncio.create_task(recorder.start(),name="controlled_live_recorder")
                 elif cmd["action"] == "stop" and recorder:
                     recorder.stop()
+                elif cmd["action"] == "pause" and not (task and not task.done()):
+                    paused=True
+                elif cmd["action"] == "resume":
+                    paused=False
                 store.handled(cmd["id"])
             except Exception as exc:
                 store.heartbeat("ERROR",{"error":str(exc)}); store.handled(cmd["id"])
-        state="RECORDING" if task and not task.done() else "IDLE"
+        state="PAUSED" if paused else "RECORDING" if task and not task.done() else "IDLE"
         if task and task.done() and task.exception(): state="ERROR"
-        store.heartbeat(state,{"recorder":getattr(recorder,"health",None)})
+        # While paused, do not mutate the control SQLite file being copied.
+        # Write one acknowledgement in the command iteration, then poll reads.
+        if not paused or cmd:
+            store.heartbeat(state,{"recorder":getattr(recorder,"health",None)})
         await asyncio.sleep(poll_seconds)
 
 

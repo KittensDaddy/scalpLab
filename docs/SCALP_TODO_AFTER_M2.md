@@ -44,9 +44,12 @@ Scope: Changes, additions, and new requirements discussed after the Milestone 2 
   - [ ] Selected symbols
   - [ ] Top liquid USDT perpetuals
   - [ ] All eligible USDT perpetuals
-- [ ] Cache downloaded Binance historical data locally.
-- [ ] Only download missing historical ranges when cache already exists.
-- [ ] Show historical-data source and coverage in the UI.
+- [x] Cache downloaded Binance historical data locally.
+- [x] Only download missing historical ranges when cache already exists.
+- [x] Track historical-cache last-access time and keep reused data hot for at least 2 hours after its most recent backtest/replay use before it becomes eligible for eviction.
+- [x] Reuse cache coverage across runtime-root migration so already downloaded ranges are not fetched again.
+- [x] Add cache size, last-used time, hit/miss status, and explicit cleanup controls to the Storage UI.
+- [x] Show historical-data source and coverage in the UI.
 
 ## P1 — Backtest result views
 

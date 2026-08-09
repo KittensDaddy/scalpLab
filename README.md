@@ -38,6 +38,10 @@ and the independent recorder daemon; stopping the script stops both processes.
 
 ### Historical exact-range backtest
 
+The Web backtest uses the immutable daily top-100 Futures universe. Search or
+select whole cap groups, choose individual ranked contracts, or add a clearly
+marked manual symbol outside the snapshot. Saved runs retain the snapshot ID.
+
 ```bash
 scalp backtest \
   --symbols BTCUSDT,ETHUSDT,SOLUSDT \
@@ -47,6 +51,12 @@ scalp backtest \
 ```
 
 ### Start live recorder
+
+For normal operation, use `./run.sh`: it starts the independent daemon and
+begins recording automatically, without requiring the Web Start button.
+The Web controls can still stop or reconfigure capture. The recorder automatically ranks current Binance USDT
+perpetuals by Futures 24-hour quote volume and records the top 20 lightweight
+tier. Futures full L2 remains on a separate connection for at most four symbols.
 
 ```bash
 scalp record \
@@ -90,7 +100,10 @@ Designed for the current target machine:
 - 128 GB NVMe: Ubuntu, app, virtualenv, SQLite/WAL state, current working cache.
 - 500 GB HDD: `/data/scalp` bulk raw L2, trades, features, historical cache/archive.
 
-If `/data/scalp` is unavailable, ScalpLab falls back to `data/bulk` and reports that path in the UI/doctor output.
+All mutable paths resolve beneath the runtime root selected in the Storage UI.
+The initial default is `data/runtime`; after migration, raw chunks, features,
+caches, state databases, results, universes, and strategies all use the selected
+destination.
 
 ```text
 /data/scalp/

@@ -4,6 +4,9 @@
   <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>ScalpLab — Crypto Research Terminal</title>
   <link rel="stylesheet" href="/static/app.css"/>
+  <link rel="stylesheet" href="/static/universe.css"/>
+  <link rel="stylesheet" href="/static/inspector.css"/>
+  <link rel="stylesheet" href="/static/strategy-editor.css"/>
 </head>
 <body>
 <div class="shell">
@@ -16,6 +19,7 @@
       <button class="nav" data-page="recorder"><i>●</i> Live Recorder</button>
       <button class="nav" data-page="shadow"><i>◇</i> Shadow Trading</button>
       <button class="nav" data-page="integrity"><i>✓</i> Data Integrity</button>
+      <button class="nav" data-page="inspector"><i>⌗</i> Data Inspector</button>
       <button class="nav" data-page="storage"><i>▣</i> Storage</button>
       <button class="nav" data-page="history"><i>↺</i> Run History</button>
     </nav>
@@ -45,9 +49,12 @@
     <section class="page" id="page-strategies">
       <div class="grid2">
         <article class="panel"><div class="panel-head"><div><span class="eyebrow">RULE BUILDER</span><h3>Strategy versions</h3></div><button class="small" id="strategyReload">Refresh</button></div><div id="strategyVersions" class="check-list muted">Loading versions…</div></article>
-        <article class="panel controls"><div class="panel-head"><div><span class="eyebrow">SAFE DECLARATIVE RULES</span><h3>Draft editor</h3></div><span class="badge">No eval</span></div>
+        <article class="panel controls strategy-editor-panel"><div class="panel-head"><div><span class="eyebrow">SAFE DECLARATIVE RULES</span><h3>Visual strategy editor</h3></div><span class="badge">No code</span></div>
           <label>Name <input id="draftName" placeholder="LC/v1"/></label><label>Clone base <select id="draftBase"><option>TC</option><option selected>LC</option><option>LSR</option><option>RB</option><option>VB</option><option>TR</option></select></label>
-          <label>Definition <textarea id="draftDefinition" rows="18" spellcheck="false"></textarea></label><div id="draftValidation" class="note">Conditions support nested all/any groups, comparisons, ranges and crosses.</div>
+          <div class="direction-tabs"><button class="active" data-rule-side="long">Long setup</button><button data-rule-side="short">Short setup</button></div>
+          <div id="visualRuleEditor"></div>
+          <aside class="indicator-guide" id="indicatorGuide"><span>INDICATOR GUIDE</span><b>Select an indicator</b><p>Its meaning and required data tier will appear here.</p></aside>
+          <div id="draftValidation" class="note">Build entry gates, weighted evidence and trade geometry visually.</div>
           <div class="action-row"><button id="validateDraft">Validate</button><button class="primary" id="saveDraft">Save draft</button><button id="publishDraft">Publish immutable version</button></div>
         </article>
       </div>
@@ -57,7 +64,16 @@
       <div class="grid-form">
         <article class="panel controls">
           <div class="panel-head"><div><span class="eyebrow">MARKET</span><h3>Backtest configuration</h3></div><span class="badge">Binance USD-M</span></div>
-          <label>Symbols <input id="btSymbols" value="BTCUSDT, ETHUSDT, SOLUSDT"/></label>
+          <label>Universe symbols</label>
+          <div class="universe-select" id="universeSelect">
+            <button type="button" class="universe-trigger" id="universeTrigger"><span><b id="universeCount">3 selected</b><small id="universeSnapshot">Loading daily top 100…</small></span><i>⌄</i></button>
+            <div class="universe-drawer" id="universeDrawer">
+              <div class="universe-tools"><input id="universeSearch" type="search" placeholder="Search symbol, cap group or theme"/><button type="button" id="universeRefresh">Refresh ranks</button></div>
+              <div class="universe-selected" id="universeSelected"></div>
+              <div class="universe-groups" id="universeGroups"><p class="muted">Loading the latest immutable snapshot…</p></div>
+              <div class="manual-symbol"><input id="manualSymbol" placeholder="Manual symbol outside snapshot, e.g. BTCUSDT"/><button type="button" id="manualSymbolAdd">Add</button></div>
+            </div>
+          </div>
           <div class="form2"><label>Start time <input id="btStart" type="datetime-local"/></label><label>End time <input id="btEnd" type="datetime-local"/></label></div>
           <div class="form2"><label>Timeframe <select id="btInterval"><option>1m</option><option>3m</option><option selected>5m</option><option>15m</option><option>30m</option><option>1h</option></select></label><label>Starting equity <input id="btEquity" type="number" value="10000"/></label></div>
           <label>Strategies</label><div class="checks" id="strategyChecks"></div>
@@ -66,7 +82,7 @@
           <div class="job" id="jobState"><span></span><div class="job-copy"><div class="job-line"><b>Ready</b><strong id="jobPct">0%</strong></div><small id="jobMsg">Select a period and run.</small><div class="job-progress"><i id="jobProgressBar"></i></div></div></div>
         </article>
         <article class="panel results"><div class="panel-head"><div><span class="eyebrow">RESULTS</span><h3 id="resultTitle">No run selected</h3></div><span class="badge" id="dataModeBadge">—</span></div>
-          <div class="metrics" id="metrics"></div><canvas id="equityChart" height="220"></canvas>
+          <div class="metrics" id="metrics"></div><div id="resultDataEvidence" class="note">Data source and coverage will appear after a run.</div><canvas id="equityChart" height="220"></canvas>
           <div class="tabs"><button class="active" data-rpanel="strategy">By strategy</button><button data-rpanel="regime">By regime</button><button data-rpanel="direction">Long / Short</button><button data-rpanel="folds">WF folds</button><button data-rpanel="trades">Trades</button><button data-rpanel="noTrade">No trade</button></div>
           <div id="resultTable" class="table-wrap muted">Results will appear here.</div>
         </article>
@@ -76,9 +92,9 @@
     <section class="page" id="page-recorder">
       <div class="grid2">
         <article class="panel"><div class="panel-head"><div><span class="eyebrow">LIVE DATA</span><h3>Recorder control</h3></div><span class="badge" id="recBadge">STOPPED</span></div>
-          <label>Tracked symbols <input id="recSymbols" value="BTCUSDT, ETHUSDT, SOLUSDT"/></label><label>Full L2 symbols <input id="recL2" value="BTCUSDT, ETHUSDT, SOLUSDT"/></label>
+          <label>Lightweight tier <input id="recSymbols" value="Automatic daily Futures top 20" readonly/></label><label>Full L2 symbols (maximum four) <input id="recL2" value="BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT"/></label>
           <div class="action-row"><button class="primary" id="recStart">Start recorder</button><button class="danger" id="recStop">Stop safely</button></div>
-          <p class="note">Restart recovery always resnapshots the order book. Missing intervals remain recorded as gaps.</p>
+          <p class="note">The top 20 refreshes from the daily Futures-volume universe without reconnecting full L2. Restart recovery always resnapshots books.</p>
         </article>
         <article class="panel"><div class="panel-head"><div><span class="eyebrow">STREAMS</span><h3>Connection health</h3></div><span class="pulse"></span></div><div id="streamHealth" class="check-list muted">Recorder not running.</div></article>
       </div>
@@ -93,12 +109,25 @@
       <article class="panel"><div class="panel-head"><div><span class="eyebrow">TRUST</span><h3>Data integrity timeline</h3></div><button class="small" id="integrityRefresh">Refresh</button></div><div class="integrity-summary" id="integritySummary"></div><div id="gapTable" class="table-wrap"></div></article>
     </section>
 
+    <section class="page" id="page-inspector">
+      <article class="panel inspector-console">
+        <div class="panel-head"><div><span class="eyebrow">FLIGHT RECORDER</span><h3>Can this data be trusted?</h3></div><div class="inspector-controls"><select id="inspectSymbol"><option>BTCUSDT</option></select><select id="inspectHours"><option value="0.25">15 minutes</option><option value="1" selected>1 hour</option><option value="6">6 hours</option><option value="24">24 hours</option><option value="168">7 days</option></select><input id="inspectEnd" type="datetime-local" aria-label="Inspection end time"/><button id="inspectNow">Latest recorded</button><button id="inspectUseReplay" disabled>Load into Replay</button><button class="primary" id="inspectRun">Inspect range</button></div></div>
+        <div class="trust-verdict" id="trustVerdict"><span>WAITING FOR EVIDENCE</span><b>—</b><p>Select a recorded symbol and inspect its latest range.</p></div>
+        <div class="coverage-head"><span id="inspectRange">—</span><b id="inspectCoverage">0% replay coverage</b></div><div class="coverage-rail" id="coverageRail"></div>
+        <div class="signal-scope"><div><span>RECORDED MIDPRICE TRACE</span><b id="scopeReadout">No samples</b></div><canvas id="inspectChart" height="150"></canvas></div>
+        <div class="inspector-grid"><section><h4>Why this verdict</h4><div id="inspectReasons" class="evidence-list muted">No inspection yet.</div></section><section><h4>Latest book evidence</h4><div id="inspectFeature" class="evidence-list muted">No feature snapshot.</div></section></div>
+      </article>
+      <div class="grid2 inspector-tables"><article class="panel"><div class="panel-head"><div><span class="eyebrow">STREAM INVENTORY</span><h3>What was captured</h3></div></div><div id="inspectTypes" class="table-wrap muted">No inspection yet.</div></article><article class="panel"><div class="panel-head"><div><span class="eyebrow">PHYSICAL EVIDENCE</span><h3>Recent chunk files</h3></div></div><div id="inspectFiles" class="table-wrap muted">No inspection yet.</div></article></div>
+    </section>
+
     <section class="page" id="page-storage">
       <div class="grid2"><article class="panel"><div class="panel-head"><div><span class="eyebrow">DISK</span><h3>Bulk market data</h3></div><span id="storageLevel" class="badge">—</span></div><div class="disk"><div id="diskBar" class="disk-fill"></div></div><div id="storageDetail"></div><label>Runtime root <input id="runtimePath" placeholder="/srv/scalplab-runtime"/></label><div class="action-row"><button id="runtimeValidate">Validate</button><button class="primary" id="runtimeMigrate">Migrate safely</button></div><pre id="runtimeResult" class="code"></pre></article><article class="panel"><div class="panel-head"><div><span class="eyebrow">RETENTION</span><h3>Raw L2 policy</h3></div></div><p>Raw L2 rotates by policy. Derived features and preserved setup windows are retained longer.</p><button id="prunePreview">Preview retention cleanup</button><pre id="pruneResult" class="code"></pre></article></div>
+      <article class="panel"><div class="panel-head"><div><span class="eyebrow">BACKTEST CACHE</span><h3>Historical candles</h3></div><span class="badge" id="cacheHitBadge">—</span></div><p>Downloaded Binance archives and REST fallback candles are reused across runs and migrations. Files remain protected for at least two hours after their latest use.</p><div id="historicalCacheDetail" class="metrics"></div><div class="action-row"><button id="cachePreview">Preview eligible cleanup</button><button id="cacheCleanup">Delete eligible files</button></div><div id="historicalCacheRecent" class="table-wrap muted"></div><pre id="cacheResult" class="code"></pre></article>
     </section>
 
     <section class="page" id="page-history"><article class="panel"><div class="panel-head"><div><span class="eyebrow">REPRODUCIBILITY</span><h3>Saved runs</h3></div><button class="small" id="historyRefresh">Refresh</button></div><div id="historyTable" class="table-wrap"></div></article></section>
   </main>
 </div>
 <script src="/static/app.js"></script>
+<script src="/static/strategy-editor.js"></script>
 </body></html>

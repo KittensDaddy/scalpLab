@@ -16,6 +16,8 @@ class StrategyConfig(BaseModel):
     min_separation: float = Field(10, ge=0, le=100)
     min_evidence_agreement: float = Field(45, ge=0, le=100)
     min_expected_r: float = Field(1.15, ge=0)
+    version_ids: dict[str,str] = {}
+    version_definitions: dict[str,dict] = {}
 
 class RiskConfig(BaseModel):
     initial_equity: float = Field(10000, gt=0)
@@ -115,6 +117,15 @@ class AppConfig(BaseModel):
 
 def load_config(path: str | Path | None = None) -> AppConfig:
     path = Path(path or "config/default.yaml")
-    if path.exists():
-        return AppConfig.model_validate(yaml.safe_load(path.read_text()) or {})
-    return AppConfig()
+    raw=yaml.safe_load(path.read_text()) or {} if path.exists() else {}
+    # One persistent runtime root owns every mutable artifact. Static YAML may
+    # tune retention and thresholds, but must not split live writes elsewhere.
+    from scalp.runtime_storage import runtime_roots
+    layout=runtime_roots.current()
+    raw.setdefault("data",{})["cache_dir"]=str(layout.cache/"historical")
+    storage=raw.setdefault("storage",{})
+    storage["state_dir"]=str(layout.state)
+    storage["bulk_dir"]=str(layout.root)
+    storage["fallback_bulk_dir"]=str(layout.root)
+    raw.setdefault("shadow",{})["persist_path"]=str(layout.results/"shadow.db")
+    return AppConfig.model_validate(raw)

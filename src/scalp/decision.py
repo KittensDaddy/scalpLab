@@ -4,6 +4,7 @@ from scalp.config import AppConfig
 from scalp.models import DataMode, Direction, ExecutionMode, StrategyResult
 from scalp.regimes import regime_scores
 from scalp.strategies import all_strategies
+from scalp.strategy_rules import DeclarativeStrategy
 
 @dataclass
 class Decision:
@@ -18,7 +19,11 @@ class StrategyDecisionEngine:
         self.cfg = cfg
         self.data_mode = data_mode
         enabled = set(cfg.strategies.enabled)
-        self.strategies = [s for s in all_strategies() if s.id in enabled]
+        builtins={s.id:s for s in all_strategies()}
+        self.strategies=[]
+        for sid in cfg.strategies.enabled:
+            definition=cfg.strategies.version_definitions.get(sid)
+            self.strategies.append(DeclarativeStrategy(sid,definition) if definition else builtins[sid])
 
     def evaluate(self, row) -> Decision:
         reg = regime_scores(row)

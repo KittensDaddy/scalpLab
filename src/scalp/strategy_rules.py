@@ -16,13 +16,24 @@ BUILT_INS = ("TC", "LC", "LSR", "RB", "VB", "TR")
 OPS = {"gt": operator.gt, "gte": operator.ge, "lt": operator.lt, "lte": operator.le, "eq": operator.eq, "ne": operator.ne}
 FEATURES = {
     "open": "ohlcv", "high": "ohlcv", "low": "ohlcv", "close": "ohlcv", "volume": "ohlcv",
-    "atr": "ohlcv", "rsi": "ohlcv", "ema_fast": "ohlcv", "ema_slow": "ohlcv", "adx": "ohlcv",
-    "cvd": "trade_flow", "spot_cvd": "trade_flow", "taker_imbalance": "trade_flow", "trade_velocity": "trade_flow",
+    "atr": "ohlcv", "rsi": "ohlcv", "ema20": "ohlcv", "ema50": "ohlcv", "adx": "ohlcv",
+    "cvd": "trade_flow", "spot_cvd": "trade_flow", "taker_imbalance": "trade_flow", "trade_velocity_5s": "trade_flow",
     "spread_bps": "microstructure", "microprice": "microstructure", "depth_imbalance": "microstructure",
-    "ofi": "microstructure", "replenishment": "microstructure", "cancellation": "microstructure",
+    "ofi": "microstructure", "replenishment_bid": "microstructure", "replenishment_ask": "microstructure", "cancel_bid": "microstructure", "cancel_ask": "microstructure",
     "absorption_bid": "microstructure", "absorption_ask": "microstructure", "oi_delta": "microstructure",
-    "funding": "microstructure", "liquidation_buy": "microstructure", "liquidation_sell": "microstructure", "basis": "microstructure",
+    "funding_rate": "microstructure", "liquidation_buy_notional": "microstructure", "liquidation_sell_notional": "microstructure", "spot_perp_basis_bps": "microstructure",
 }
+
+FEATURE_DESCRIPTIONS={
+    "open":"First traded price in the bar.","high":"Highest traded price in the bar.","low":"Lowest traded price in the bar.","close":"Final traded price in the bar.","volume":"Base-asset volume traded during the bar.",
+    "atr":"Average True Range; recent price movement used to scale stops.","rsi":"Relative Strength Index; momentum oscillator from 0 to 100.","ema20":"Fast 20-period exponential moving average.","ema50":"Slower 50-period exponential moving average.","adx":"Average Directional Index; trend strength without direction.",
+    "cvd":"Cumulative Futures taker-buy volume minus taker-sell volume.","spot_cvd":"Spot-market cumulative volume delta for confirmation.","taker_imbalance":"Recent aggressive buy versus sell imbalance, from -1 to +1.","trade_velocity_5s":"Number or intensity of aggressive trades in the latest five seconds.",
+    "spread_bps":"Best ask minus best bid, measured in basis points.","microprice":"Order-book price adjusted toward the thinner side of top liquidity.","depth_imbalance":"Bid versus ask depth imbalance near the top of book.","ofi":"Order-flow imbalance combining book changes and aggressive flow.",
+    "replenishment_bid":"Bid liquidity that reappears after being consumed.","replenishment_ask":"Ask liquidity that reappears after being consumed.","cancel_bid":"Bid liquidity removed without a matching trade.","cancel_ask":"Ask liquidity removed without a matching trade.","absorption_bid":"Aggressive selling absorbed without equivalent downward progress.","absorption_ask":"Aggressive buying absorbed without equivalent upward progress.",
+    "oi_delta":"Change in Futures open interest.","funding_rate":"Current perpetual funding rate.","liquidation_buy_notional":"Recent forced buy-liquidation notional.","liquidation_sell_notional":"Recent forced sell-liquidation notional.","spot_perp_basis_bps":"Perpetual price premium or discount versus Spot in basis points.",
+}
+
+DATA_RANK={"ohlcv":0,"trade_flow":1,"microstructure":2}
 
 
 def _number(value):
@@ -137,3 +148,38 @@ class StrategyVersionStore:
         if not current or current.get("protected"): raise ValueError("built-ins cannot be archived")
         with sqlite3.connect(self.path) as c: c.execute("UPDATE definitions SET archived=1 WHERE id=?",(sid,))
         return self.get(sid)
+
+
+class DeclarativeStrategy:
+    """Safe adapter that makes a published rule definition look like a built-in strategy."""
+    def __init__(self, strategy_id: str, definition: dict):
+        self.id=strategy_id; self.definition=definition; self.interpreter=RuleInterpreter()
+        verdict=self.interpreter.validate(definition)
+        if not verdict["valid"]: raise ValueError("; ".join(verdict["errors"]))
+        self.requirements=verdict["requirements"]
+
+    def evaluate(self,row,regimes,direction,data_mode):
+        from scalp.models import StrategyResult
+        side=self.definition["long" if direction.value=="LONG" else "short"]
+        row_map=row if hasattr(row,"get") else vars(row)
+        missing=[f for f in self.interpreter.fields(side) if row_map.get(f) is None]
+        mode_rank={"OHLCV_PROXY":0,"TRADE_FLOW":1,"MICROSTRUCTURE":2}[data_mode.value]
+        required_rank=max((DATA_RANK[x] for x in self.requirements),default=0)
+        gate=self.interpreter.evaluate(side["conditions"],row_map)
+        evidence={}; score=float(side.get("base_score",0))
+        reasons=[]
+        for item in side.get("score",[]):
+            if self.interpreter.evaluate(item["when"],row_map):
+                weight=float(item["weight"]); score+=weight; family=item["evidence_family"]
+                evidence[family]=evidence.get(family,0)+weight/100; reasons.append(f"{family}: rule matched")
+        score=max(0,min(100,score)); active=[abs(x) for x in evidence.values() if abs(x)>=.2]
+        agreement=max(0,min(100,(sum(active)/len(active)*100 if active else 0)))
+        trade=side["trade"]; anchor=float(row_map.get(trade["stop_anchor"])); atr=float(row_map.get("atr") or 0); offset=float(trade["atr_offset"])*atr
+        long=direction.value=="LONG"; stop=anchor-offset if long else anchor+offset; close=float(row_map.get("close")); target_r=float(trade["target_r"]); target=close+(1 if long else -1)*abs(close-stop)*target_r
+        eligible=gate and not missing and mode_rank>=required_rank
+        against=[]
+        if not gate: against.append("Entry condition group did not match")
+        if missing: against.append("Missing fields: "+", ".join(sorted(missing)))
+        if mode_rank<required_rank: against.append("Required data mode unavailable")
+        regime_name="TREND_UP" if long else "TREND_DOWN"
+        return StrategyResult(self.id,direction,eligible,score,agreement,float(regimes.get(regime_name,50)),100,data_mode,mode_rank<required_rank,reasons,against,evidence,stop,target,target_r,float(trade["urgency"]),list(self.interpreter.fields(side)),missing)

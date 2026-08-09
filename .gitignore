@@ -8,4 +8,8 @@ build/
 *.log
 .data/
 data/runtime/
+data/bulk/
+data/cache/
+data/state/
 results/*.db
+config/runtime.json

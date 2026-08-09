@@ -36,10 +36,17 @@ class ResearchService:
         return frames
     def fetch_frames(self,symbols,interval,lookback_days,cfg=None,progress=None):
         end=datetime.now(timezone.utc); start=end-timedelta(days=lookback_days); return self.fetch_frames_range(symbols,interval,start,end,cfg,progress)
+    @staticmethod
+    def _historical_coverage(frames):
+        symbols={symbol:dict(frame.attrs.get("historical_data",{})) for symbol,frame in frames.items() if frame.attrs.get("historical_data")}
+        sources={}
+        for item in symbols.values():
+            for source,count in item.get("day_access_sources",{}).items(): sources[source]=sources.get(source,0)+count
+        return {"mode":"OHLCV_PROXY","provider":"BINANCE_USD_M","sources":sources,"symbols":symbols,"minimum_coverage_pct":min((x.get("coverage_pct",0) for x in symbols.values()),default=0)}
     def run_range(self,symbols,interval,start,end,overrides=None,data_mode=DataMode.OHLCV_PROXY,progress=None):
         cfg=self._cfg(interval,overrides); emit_progress(progress,0,"Preparing backtest")
         frames=self.fetch_frames_range(symbols,interval,start,end,cfg,map_progress(progress,2,35))
-        report=BacktestEngine(cfg,data_mode).run(frames,progress=map_progress(progress,35,99))
+        coverage=self._historical_coverage(frames); report=BacktestEngine(cfg,data_mode).run(frames,progress=map_progress(progress,35,99)); report["historical_data"]=coverage
         emit_progress(progress,100,"Backtest complete")
         return report
     def run(self,symbols,interval,lookback_days,overrides=None,progress=None):
@@ -63,9 +70,9 @@ class ResearchService:
         emit_progress(progress,100,"Microstructure replay complete")
         return report
     def walkforward(self,symbols,interval,lookback_days,overrides=None,tune=False,progress=None):
-        cfg=self._cfg(interval,overrides); frames=self.fetch_frames(symbols,interval,lookback_days,cfg,map_progress(progress,0,22)); return WalkForwardRunner(cfg).run(frames,tune=tune,progress=map_progress(progress,22,100))
+        cfg=self._cfg(interval,overrides); frames=self.fetch_frames(symbols,interval,lookback_days,cfg,map_progress(progress,0,22)); coverage=self._historical_coverage(frames); report=WalkForwardRunner(cfg).run(frames,tune=tune,progress=map_progress(progress,22,100)); report["historical_data"]=coverage; return report
     def walkforward_range(self,symbols,interval,start,end,overrides=None,tune=False,progress=None):
-        cfg=self._cfg(interval,overrides); frames=self.fetch_frames_range(symbols,interval,start,end,cfg,map_progress(progress,0,22)); return WalkForwardRunner(cfg).run(frames,tune=tune,progress=map_progress(progress,22,100))
+        cfg=self._cfg(interval,overrides); frames=self.fetch_frames_range(symbols,interval,start,end,cfg,map_progress(progress,0,22)); coverage=self._historical_coverage(frames); report=WalkForwardRunner(cfg).run(frames,tune=tune,progress=map_progress(progress,22,100)); report["historical_data"]=coverage; return report
     def optimize(self,symbols,interval,lookback_days,progress=None):
         cfg=self._cfg(interval); frames=self.fetch_frames(symbols,interval,lookback_days,cfg,map_progress(progress,0,20)); return grid_search(cfg,frames,{"strategies.min_score":[62,68,74],"strategies.min_separation":[6,10,14]},progress=map_progress(progress,20,100))
     def replay_tardis_sample(self,symbol,day,interval="1m",overrides=None,progress=None):

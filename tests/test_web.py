@@ -27,3 +27,36 @@ def test_web_polling_is_single_flight():
     assert 'jobPollGeneration' in js
     assert 'AbortController' in js
     assert 'setInterval(async' not in js
+
+
+def test_backtest_uses_ranked_universe_selector():
+    from pathlib import Path
+    root=Path(__file__).parents[1]/'src/scalp/web'
+    html=(root/'templates/index.html').read_text()
+    js=(root/'static/app.js').read_text()
+    assert 'id="universeGroups"' in html
+    assert 'id="universeSearch"' in html
+    assert 'id="manualSymbol"' in html
+    assert 'btSymbols' not in html
+    assert 'universe_snapshot_id:universeSnapshotId' in js
+    assert "data-universe-group" in js
+
+
+def test_data_inspector_ui_is_wired():
+    from pathlib import Path
+    root=Path(__file__).parents[1]/'src/scalp/web'
+    html=(root/'templates/index.html').read_text(); js=(root/'static/app.js').read_text()
+    assert 'data-page="inspector"' in html
+    assert 'id="coverageRail"' in html
+    assert 'id="inspectEnd"' in html
+    assert '/api/data-inspector' in js
+
+
+def test_strategy_editor_is_visual_not_json():
+    from pathlib import Path
+    root=Path(__file__).parents[1]/'src/scalp/web'
+    html=(root/'templates/index.html').read_text(); editor=(root/'static/strategy-editor.js').read_text()
+    assert 'id="visualRuleEditor"' in html
+    assert 'id="indicatorGuide"' in html
+    assert 'draftDefinition' not in html
+    assert 'data-add-group' in editor

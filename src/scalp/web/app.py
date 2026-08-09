@@ -8,17 +8,19 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from scalp.service import ResearchService
 from scalp.storage import RunStore
-from scalp.config import load_config
+from scalp.config import load_config, AppConfig
 from scalp.live.integrity import IntegrityStore
 from scalp.live.storage_health import StorageManager
 from scalp.live.doctor import doctor_async
 from scalp.live.shadow import ShadowPaperTrader, ShadowStore
 from scalp.data.tardis import TardisSampleClient
+from scalp.data.binance import HistoricalCacheIndex, utc_ms
 from scalp.runtime import fd_stats
 from scalp.runtime_storage import runtime_roots
 from scalp.universe import UniverseService
 from scalp.strategy_rules import StrategyVersionStore, RuleInterpreter
 from scalp.recorder_control import RecorderControlStore
+from scalp.data_inspector import DataInspector
 
 BASE=Path(__file__).resolve().parent
 app=FastAPI(title="ScalpLab",version="0.2.2")
@@ -63,6 +65,10 @@ class DraftRequest(BaseModel):
 class DefinitionRequest(BaseModel):
     definition:dict
 
+class ShadowStartRequest(BaseModel):
+    strategies:list[str]=["TC","LC","LSR","RB","VB","TR"]
+    strategy_versions:dict[str,str]=Field(default_factory=dict)
+
 class TardisRequest(BaseModel):
     symbol:str="BTCUSDT"; day:str; data_type:str="incremental_book_L2"
 
@@ -82,7 +88,11 @@ def universe(): return UniverseService().latest()
 
 @app.post("/api/universe/refresh")
 async def universe_refresh():
-    try: return await asyncio.to_thread(UniverseService().refresh)
+    try:
+        service=UniverseService(); snapshot=await asyncio.wait_for(asyncio.to_thread(service.refresh,False),timeout=20)
+        asyncio.create_task(asyncio.to_thread(service.enrich_snapshot,snapshot))
+        return snapshot
+    except TimeoutError: raise HTTPException(504,"Binance universe refresh timed out; check server connectivity")
     except Exception as e: raise HTTPException(502,str(e))
 
 @app.get("/api/settings/storage")
@@ -92,16 +102,31 @@ def storage_settings():
 @app.post("/api/settings/storage/validate")
 def storage_validate(req:StoragePathRequest):
     try: return runtime_roots.validate(req.path)
-    except ValueError as e: raise HTTPException(400,str(e))
+    except (ValueError,OSError) as e: raise HTTPException(400,str(e))
 
 @app.post("/api/settings/storage/migrate")
 def storage_migrate(req:StoragePathRequest):
-    producing=any(v.get("status")=="RUNNING" for v in jobs.values()) or bool(shadow_task and not shadow_task.done()) or RecorderControlStore().status().get("state")=="RECORDING"
-    try: return runtime_roots.migrate(req.path,jobs_running=producing)
+    control=RecorderControlStore(); recorder_state=control.status()
+    producing=any(v.get("status")=="RUNNING" for v in jobs.values()) or bool(shadow_task and not shadow_task.done()) or recorder_state.get("state")=="RECORDING"
+    paused=False
+    try:
+        if producing: return runtime_roots.migrate(req.path,jobs_running=True)
+        if recorder_state.get("running") and recorder_state.get("state")=="IDLE":
+            control.command("pause")
+            deadline=time.time()+5
+            while time.time()<deadline:
+                if control.status().get("state")=="PAUSED": paused=True; break
+                time.sleep(.1)
+            if not paused: raise RuntimeError("recorder daemon did not pause for migration")
+        return runtime_roots.migrate(req.path,jobs_running=False)
     except (ValueError,RuntimeError,OSError) as e: raise HTTPException(409,str(e))
+    finally:
+        if paused: RecorderControlStore().command("resume")
 
 @app.get("/api/strategies")
-def strategies_list(): return {"strategies":StrategyVersionStore().list(),"feature_registry":__import__('scalp.strategy_rules',fromlist=['FEATURES']).FEATURES}
+def strategies_list():
+    rules=__import__('scalp.strategy_rules',fromlist=['FEATURES','FEATURE_DESCRIPTIONS'])
+    return {"strategies":StrategyVersionStore().list(),"feature_registry":{name:{"tier":tier,"description":rules.FEATURE_DESCRIPTIONS.get(name,"")} for name,tier in rules.FEATURES.items()}}
 
 @app.post("/api/strategies/drafts")
 def strategy_create(req:DraftRequest):
@@ -139,8 +164,8 @@ async def symbols():
     try: return {"symbols":await asyncio.to_thread(service.symbols)}
     except Exception as e: return {"symbols":["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT"],"warning":str(e)}
 
-def _overrides(req):
-    return {"strategies":{"enabled":req.strategies,"min_score":req.min_score,"min_separation":req.min_separation},"risk":{"initial_equity":req.initial_equity,"normal_risk_pct":req.risk_pct,"max_total_open_risk_pct":req.max_open_risk_pct,"max_position_notional_pct":req.max_position_notional_pct},"execution":{"maker_fee_bps":req.maker_fee_bps,"taker_fee_bps":req.taker_fee_bps,"market_slippage_bps":req.market_slippage_bps}}
+def _overrides(req,definitions=None):
+    return {"strategies":{"enabled":req.strategies,"min_score":req.min_score,"min_separation":req.min_separation,"version_ids":req.strategy_versions,"version_definitions":definitions or {}},"risk":{"initial_equity":req.initial_equity,"normal_risk_pct":req.risk_pct,"max_total_open_risk_pct":req.max_open_risk_pct,"max_position_notional_pct":req.max_position_notional_pct},"execution":{"maker_fee_bps":req.maker_fee_bps,"taker_fee_bps":req.taker_fee_bps,"market_slippage_bps":req.market_slippage_bps}}
 
 async def _run_job(jid,req,kind="backtest"):
     started=time.time()
@@ -154,27 +179,29 @@ async def _run_job(jid,req,kind="backtest"):
             if not candidate.exists(): raise ValueError("unknown universe_snapshot_id")
             universe=json.loads(candidate.read_text())
         req.universe_snapshot_id=req.universe_snapshot_id or universe.get("snapshot_id")
-        version_store=StrategyVersionStore(); resolved={}
+        version_store=StrategyVersionStore(); resolved={}; definitions={}
         for strategy in req.strategies:
             vid=req.strategy_versions.get(strategy,strategy)
             item=version_store.get(vid)
             if not item or item.get("status") != "published" or item.get("archived"):
                 raise ValueError(f"strategy version is not published: {strategy}={vid}")
             resolved[strategy]={"id":vid,"hash":item.get("hash") or f"builtin-{strategy}-r1"}
+            if item.get("definition"): definitions[strategy]=item["definition"]
         req.strategy_versions={k:v["id"] for k,v in resolved.items()}
+        overrides=_overrides(req,definitions)
         if kind=="replay":
             if not req.start_time or not req.end_time: raise ValueError("Replay requires exact start and end")
-            report=await asyncio.to_thread(service.replay_range,req.symbols,req.interval,req.start_time,req.end_time,overrides=_overrides(req),progress=on_progress)
+            report=await asyncio.to_thread(service.replay_range,req.symbols,req.interval,req.start_time,req.end_time,overrides=overrides,progress=on_progress)
         elif kind=="walkforward":
             if req.start_time and req.end_time:
-                report=await asyncio.to_thread(service.walkforward_range,req.symbols,req.interval,req.start_time,req.end_time,overrides=_overrides(req),tune=req.walkforward_tune,progress=on_progress)
+                report=await asyncio.to_thread(service.walkforward_range,req.symbols,req.interval,req.start_time,req.end_time,overrides=overrides,tune=req.walkforward_tune,progress=on_progress)
             else:
-                report=await asyncio.to_thread(service.walkforward,req.symbols,req.interval,req.lookback_days,overrides=_overrides(req),tune=req.walkforward_tune,progress=on_progress)
+                report=await asyncio.to_thread(service.walkforward,req.symbols,req.interval,req.lookback_days,overrides=overrides,tune=req.walkforward_tune,progress=on_progress)
         else:
             if req.start_time and req.end_time:
-                report=await asyncio.to_thread(service.run_range,req.symbols,req.interval,req.start_time,req.end_time,overrides=_overrides(req),progress=on_progress)
+                report=await asyncio.to_thread(service.run_range,req.symbols,req.interval,req.start_time,req.end_time,overrides=overrides,progress=on_progress)
             else:
-                report=await asyncio.to_thread(service.run,req.symbols,req.interval,req.lookback_days,overrides=_overrides(req),progress=on_progress)
+                report=await asyncio.to_thread(service.run,req.symbols,req.interval,req.lookback_days,overrides=overrides,progress=on_progress)
         on_progress(99.5,"Saving reproducible run")
         rid=store.save(req.model_dump()|{"kind":kind,"universe_symbols":[x["symbol"] for x in universe.get("assets",[])],"strategy_version_hashes":resolved},report)
         jobs[jid]={"status":"DONE","progress":100,"message":"Complete","run_id":rid,"report":report,"started_at":started,"updated_at":time.time()}
@@ -201,12 +228,22 @@ def run(rid:str): return store.get(rid) or {"error":"not found"}
 def data_integrity():
     cfg=load_config(); db=IntegrityStore(Path(cfg.storage.state_dir)/"integrity.db")
     return {"last_session":db.last_session(),"gaps":db.recent_gaps(100),"latest_features":db.latest_features(),"storage":StorageManager(cfg.storage).status()}
+@app.get("/api/data-inspector")
+def data_inspector(symbol:str="BTCUSDT",hours:float=1,end:str|None=None):
+    if hours<=0 or hours>168: raise HTTPException(400,"hours must be between 0 and 168")
+    try: end_ms=utc_ms(end) if end else None
+    except Exception as exc: raise HTTPException(400,f"invalid inspection end time: {exc}")
+    cfg=load_config(); return DataInspector(IntegrityStore(Path(cfg.storage.state_dir)/"integrity.db")).inspect(symbol,hours,end_ms)
 @app.get("/api/coverage/{symbol}")
 def coverage(symbol:str,start:str,end:str): return {"segments":service.coverage(symbol,start,end)}
 @app.get("/api/storage")
 def storage_status(): return StorageManager(load_config().storage).status()
 @app.post("/api/storage/prune")
 def storage_prune(dry_run:bool=True): return {"dry_run":dry_run,"files":StorageManager(load_config().storage).prune_raw_l2(dry_run=dry_run)}
+@app.get("/api/storage/historical-cache")
+def historical_cache_status(): return HistoricalCacheIndex(load_config().data.cache_dir).status()
+@app.post("/api/storage/historical-cache/cleanup")
+def historical_cache_cleanup(dry_run:bool=True): return HistoricalCacheIndex(load_config().data.cache_dir).cleanup(dry_run=dry_run)
 @app.get("/api/doctor")
 async def doctor(): return await doctor_async(load_config())
 
@@ -226,10 +263,17 @@ async def recorder_stop():
 def shadow_status():
     cfg=load_config(); return {"running":bool(shadow_task and not shadow_task.done()),"recent":ShadowStore(cfg.shadow.persist_path).recent(50),"live_money":False}
 @app.post("/api/shadow/start")
-async def shadow_start():
+async def shadow_start(req:ShadowStartRequest|None=None):
     global shadow,shadow_task
     if shadow_task and not shadow_task.done(): return {"running":True,"message":"already running"}
-    cfg=load_config(); shadow=ShadowPaperTrader(cfg); shadow_task=asyncio.create_task(shadow.start()); return {"running":True,"live_money":False}
+    req=req or ShadowStartRequest(); cfg=load_config(); raw=cfg.model_dump(); definitions={}; versions={}; version_store=StrategyVersionStore()
+    for sid in req.strategies:
+        vid=req.strategy_versions.get(sid,sid); item=version_store.get(vid)
+        if not item or item.get("status")!="published" or item.get("archived"): raise HTTPException(409,f"strategy version is not published: {sid}={vid}")
+        versions[sid]=vid
+        if item.get("definition"): definitions[sid]=item["definition"]
+    raw["strategies"].update({"enabled":req.strategies,"version_ids":versions,"version_definitions":definitions})
+    cfg=AppConfig.model_validate(raw); shadow=ShadowPaperTrader(cfg); shadow_task=asyncio.create_task(shadow.start()); return {"running":True,"strategy_versions":versions,"live_money":False}
 @app.post("/api/shadow/stop")
 async def shadow_stop():
     if shadow: shadow.stop()

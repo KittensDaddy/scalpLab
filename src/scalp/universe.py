@@ -6,6 +6,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -24,7 +25,7 @@ class UniverseService:
 
     @staticmethod
     def _fetch(url):
-        with httpx.Client(timeout=20, limits=httpx.Limits(max_connections=4, max_keepalive_connections=2)) as c:
+        with httpx.Client(timeout=httpx.Timeout(8,connect=5), limits=httpx.Limits(max_connections=4, max_keepalive_connections=2)) as c:
             return c.get(url).raise_for_status().json()
 
     def latest(self):
@@ -32,14 +33,23 @@ class UniverseService:
         if not pointer.exists(): return {"snapshot_id": None, "assets": [], "stale": True}
         return json.loads(pointer.read_text())
 
-    def refresh(self):
-        info = self.fetch_json("https://fapi.binance.com/fapi/v1/exchangeInfo")
-        tickers = self.fetch_json("https://fapi.binance.com/fapi/v1/ticker/24hr")
+    def refresh(self, enrich=True):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            info_future=pool.submit(self.fetch_json,"https://fapi.binance.com/fapi/v1/exchangeInfo")
+            ticker_future=pool.submit(self.fetch_json,"https://fapi.binance.com/fapi/v1/ticker/24hr")
+            info=info_future.result(); tickers=ticker_future.result()
         tradable = {s["symbol"] for s in info.get("symbols", []) if s.get("status") == "TRADING"
                     and s.get("quoteAsset") == "USDT" and s.get("contractType") == "PERPETUAL"}
         ranked = sorted((t for t in tickers if t.get("symbol") in tradable),
                         key=lambda x: float(x.get("quoteVolume") or 0), reverse=True)[:100]
-        metadata = self._metadata()
+        metadata = self._metadata() if enrich else {}
+        return self._snapshot(ranked,metadata,enrichment_pending=not enrich)
+
+    def enrich_snapshot(self,snapshot):
+        ranked=[{"symbol":x["symbol"],"quoteVolume":x.get("futures_quote_volume",0)} for x in snapshot.get("assets",[])]
+        return self._snapshot(ranked,self._metadata(),enrichment_pending=False)
+
+    def _snapshot(self,ranked,metadata,enrichment_pending=False):
         overrides = self._overrides()
         assets = []
         for rank, ticker in enumerate(ranked, 1):
@@ -55,7 +65,7 @@ class UniverseService:
                            "market_cap": cap or None, "cap_group": cap_group, "theme_tags": themes,
                            "mapping_quality": "override" if sym in overrides else "ambiguous" if ambiguous else "matched" if match else "unresolved"})
         created = datetime.now(timezone.utc).isoformat(); digest = hashlib.sha256(json.dumps(assets, sort_keys=True).encode()).hexdigest()[:16]
-        snapshot = {"snapshot_id": f"{created[:10]}-{digest}", "created_at": created, "selection_date": created[:10], "assets": assets, "stale": False}
+        snapshot = {"snapshot_id": f"{created[:10]}-{digest}", "created_at": created, "selection_date": created[:10], "assets": assets, "stale": False,"enrichment_pending":enrichment_pending}
         immutable = self.root / f"{snapshot['snapshot_id']}.json"
         if not immutable.exists(): immutable.write_text(json.dumps(snapshot, indent=2))
         (self.root / "latest.json").write_text(json.dumps(snapshot, indent=2))
