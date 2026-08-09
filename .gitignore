@@ -7,3 +7,5 @@ dist/
 build/
 *.log
 .data/
+data/runtime/
+results/*.db

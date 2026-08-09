@@ -8,9 +8,10 @@ Type=simple
 User=scalp
 WorkingDirectory=/opt/scalplab
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/scalplab/.venv/bin/scalp record
+ExecStart=/opt/scalplab/.venv/bin/scalp recorder-daemon
 Restart=on-failure
 RestartSec=5
+LimitNOFILE=16384
 StartLimitIntervalSec=300
 StartLimitBurst=20
 TimeoutStopSec=30

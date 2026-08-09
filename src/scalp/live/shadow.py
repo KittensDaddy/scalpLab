@@ -24,10 +24,10 @@ class ShadowStore:
 
 class ShadowPaperTrader:
     """Live paper/shadow loop. Never contains Binance order endpoints or API-key handling."""
-    def __init__(self,cfg:AppConfig):
+    def __init__(self,cfg:AppConfig,console_status:bool=False):
         self.cfg=cfg; self.client=BinanceFuturesClient(cfg.data.request_timeout,cfg.data.request_pause_seconds,cfg.data.cache_dir)
         self.integrity=IntegrityStore(Path(cfg.storage.state_dir)/"integrity.db"); self.store=ShadowStore(cfg.shadow.persist_path)
-        self.frames={}; self.pending={}; self.open={}; self.stop_event=asyncio.Event(); self.equity=float(cfg.risk.initial_equity)
+        self.frames={}; self.pending={}; self.open={}; self.stop_event=asyncio.Event(); self.equity=float(cfg.risk.initial_equity); self.console_status=console_status; self.started=time.time(); self.bars_seen=0
     async def seed(self):
         end=pd.Timestamp.now(tz="UTC"); start=end-pd.Timedelta(minutes=self.cfg.shadow.seed_lookback_bars*5)
         for s in self.cfg.live.symbols:
@@ -99,11 +99,18 @@ class ShadowPaperTrader:
                     async for raw in ws:
                         msg=json.loads(raw).get("data",{}); k=msg.get("k",{})
                         if not k.get("x"): continue
+                        self.bars_seen+=1
                         bar={"timestamp":pd.to_datetime(k["t"],unit="ms",utc=True),"open":float(k["o"]),"high":float(k["h"]),"low":float(k["l"]),"close":float(k["c"]),"volume":float(k["v"]),"quote_volume":float(k["q"]),"trades":int(k["n"]),"taker_buy_base":float(k["V"]),"taker_buy_quote":float(k["Q"])}
                         self._process_bar(k["s"].upper(),bar)
+                        if self.console_status:
+                            elapsed=int(time.time()-self.started); h,rem=divmod(elapsed,3600); m,sec=divmod(rem,60)
+                            print(f"\r[SHADOW LIVE {h:02d}:{m:02d}:{sec:02d}] bars {self.bars_seen:,} · equity {self.equity:,.2f} · open {len(self.open)} · pending {len(self.pending)}   ",end="",flush=True)
             except asyncio.CancelledError: raise
             except Exception:
                 self._invalidate_all("SHADOW_STREAM_GAP"); await asyncio.sleep(3)
     def stop(self): self.stop_event.set()
 
-def run_shadow(cfg): asyncio.run(ShadowPaperTrader(cfg).start())
+def run_shadow(cfg,show_status:bool=False):
+    try: asyncio.run(ShadowPaperTrader(cfg,console_status=show_status).start())
+    finally:
+        if show_status: print("\nShadow mode stopped.")

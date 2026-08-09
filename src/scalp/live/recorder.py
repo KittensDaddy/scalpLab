@@ -13,12 +13,12 @@ from scalp.live.storage_health import StorageManager
 from scalp.models import BookQuality, GapReason
 
 class BinanceLiveRecorder:
-    def __init__(self,cfg:AppConfig):
-        self.cfg=cfg; self.live=cfg.live; self.storage_cfg=cfg.storage; self.stop_event=asyncio.Event()
+    def __init__(self,cfg:AppConfig,console_status:bool=False):
+        self.cfg=cfg; self.live=cfg.live; self.storage_cfg=cfg.storage; self.stop_event=asyncio.Event(); self.console_status=console_status
         self.integrity=IntegrityStore(Path(cfg.storage.state_dir)/"integrity.db")
         self.session_id=None; self.writer=None; self.feature_writer=None
         self.fut_books={s:LocalOrderBook(s) for s in self.live.full_l2_symbols}; self.spot_books={s:LocalOrderBook(s) for s in self.live.full_l2_symbols}
-        self.micro=MicrostructureTracker(); self.health={"started_ms":now_ms(),"streams":{},"last_event":{},"errors":[],"dropped":0}
+        self.micro=MicrostructureTracker(); self.health={"started_ms":now_ms(),"streams":{},"last_event":{},"errors":[],"dropped":0,"events":0,"trades":0,"depth_updates":0,"features":0}
         self.gaps={}; self.storage_level="OK"; self.last_prune_ms=0
 
     def _bulk_root(self): return StorageManager(self.storage_cfg).bulk_root()
@@ -56,6 +56,7 @@ class BinanceLiveRecorder:
             asyncio.create_task(self._heartbeat_loop(),name="heartbeat"),
             asyncio.create_task(self._derivatives_poll_loop(),name="derivatives"),
         ]
+        if self.console_status: tasks.append(asyncio.create_task(self._console_status_loop(),name="console_status"))
         try: await self.stop_event.wait()
         finally:
             for t in tasks: t.cancel()
@@ -145,11 +146,13 @@ class BinanceLiveRecorder:
                 await asyncio.sleep(backoff); backoff=min(self.live.reconnect_max_seconds,backoff*2)
 
     async def _handle(self,market,data,recv):
-        et=data.get("e",""); symbol=data.get("s","GLOBAL").upper(); self.health["last_event"][market]=recv
+        et=data.get("e",""); symbol=data.get("s","GLOBAL").upper(); self.health["last_event"][market]=recv; self.health["events"]+=1
         if et in {"aggTrade","trade"}:
+            self.health["trades"]+=1
             self.micro.on_trade(symbol,float(data["p"]),float(data["q"]),bool(data.get("m",False)),market,int(data.get("E",recv)))
             self._write_event(market,symbol,"trade",data,recv)
         elif et=="depthUpdate":
+            self.health["depth_updates"]+=1
             books=self.fut_books if market=="futures" else self.spot_books; book=books.get(symbol)
             if not book: return
             try:
@@ -184,8 +187,19 @@ class BinanceLiveRecorder:
                 if not fb or fb.quality!=BookQuality.HEALTHY: continue
                 snap=self.micro.snapshot(s,fb.metrics(),sb.metrics() if sb and sb.quality==BookQuality.HEALTHY else None,ts)
                 snap.update({"event_type":"feature","exchange":"local","market":"derived","symbol":s,"exchange_ts":ts,"receive_ts":ts,"session_id":self.session_id,"quality":fb.quality.value,"source":"LOCAL_DERIVED"})
-                self.feature_writer.add(snap)
+                self.feature_writer.add(snap); self.health["features"]+=1
                 self.integrity.update_latest_feature(s,ts,fb.quality.value,snap)
+
+
+    async def _console_status_loop(self):
+        """Human heartbeat for an infinite recorder; percentage would be misleading."""
+        while not self.stop_event.is_set():
+            await asyncio.sleep(5)
+            elapsed=max(0,(now_ms()-self.health["started_ms"])//1000); h,rem=divmod(elapsed,3600); m,sec=divmod(rem,60)
+            fs=self.health.get("streams",{}).get("futures",{}).get("state","STARTING"); ss=self.health.get("streams",{}).get("spot",{}).get("state","STARTING")
+            msg=(f"\r[LIVE {h:02d}:{m:02d}:{sec:02d}] events {self.health['events']:,} · trades {self.health['trades']:,} · "
+                 f"depth {self.health['depth_updates']:,} · features {self.health['features']:,} · Futures {fs} · Spot {ss} · disk {self.storage_level}   ")
+            print(msg,end="",flush=True)
 
     async def _heartbeat_loop(self):
         while not self.stop_event.is_set():
@@ -208,11 +222,13 @@ class BinanceLiveRecorder:
                 self.health["errors"]=(self.health.get("errors",[])+[{"ts":now_ms(),"where":"derivatives_poll","error":str(exc)}])[-50:]
             await asyncio.sleep(min(self.live.oi_poll_seconds,self.live.funding_poll_seconds))
 
-def run_recorder(cfg:AppConfig):
-    rec=BinanceLiveRecorder(cfg)
+def run_recorder(cfg:AppConfig,show_status:bool=False):
+    rec=BinanceLiveRecorder(cfg,console_status=show_status)
     loop=asyncio.new_event_loop(); asyncio.set_event_loop(loop)
     for sig in (signal.SIGINT,signal.SIGTERM):
         try: loop.add_signal_handler(sig,rec.stop)
         except NotImplementedError: pass
     try: loop.run_until_complete(rec.start())
-    finally: loop.close()
+    finally:
+        if show_status: print("\nRecorder stopped.")
+        loop.close()

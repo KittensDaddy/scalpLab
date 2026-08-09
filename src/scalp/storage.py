@@ -4,7 +4,10 @@ import json, sqlite3, uuid
 from datetime import datetime, timezone
 
 class RunStore:
-    def __init__(self,path="results/runs.db"):
+    def __init__(self,path=None):
+        if path is None:
+            from scalp.runtime_storage import runtime_roots
+            path=runtime_roots.current().results/"runs.db"
         self.path=Path(path); self.path.parent.mkdir(parents=True,exist_ok=True)
         with sqlite3.connect(self.path) as c:
             c.execute("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, created_at TEXT, request_json TEXT, report_json TEXT)")

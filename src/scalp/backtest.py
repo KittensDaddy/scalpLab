@@ -12,6 +12,7 @@ from scalp.models import DataMode, Direction, ExecutionMode, Trade, StrategyResu
 from scalp.regimes import dominant_regime
 from scalp.decision import StrategyDecisionEngine
 from scalp.calibration import score_calibration
+from scalp.progress import emit_progress
 
 @dataclass
 class PendingOrder:
@@ -206,10 +207,16 @@ class BacktestEngine:
         t.r_multiple=t.net_pnl/max(risk_amount,1e-12)
         self.trades.append(t)
 
-    def run(self,frames:dict[str,pd.DataFrame]) -> dict:
+    def run(self,frames:dict[str,pd.DataFrame], progress=None) -> dict:
+        emit_progress(progress,0,"Building indicators and multi-timeframe features")
         self.prepare(frames)
+        emit_progress(progress,5,"Features ready; replaying bars")
         timestamps=sorted(set().union(*[set(df.timestamp) for df in self.frames.values()]))
-        for ts in timestamps:
+        total=max(1,len(timestamps)); update_every=max(1,total//100)
+        for pos,ts in enumerate(timestamps):
+            if pos % update_every == 0:
+                pct=5+90*(pos/total)
+                emit_progress(progress,pct,f"Replay {pos+1:,}/{total:,} bars · trades {len(self.trades)} · open {len(self.open_trades)}")
             # fills then position management
             for symbol,df in self.frames.items():
                 idx=self.indices[symbol].get(ts)
@@ -236,11 +243,14 @@ class BacktestEngine:
                     px=float(self.frames[symbol].iloc[idx].close); side=1 if t.direction=="LONG" else -1
                     mtm+=(px-t.entry_price)*t.remaining_quantity*side
             self.equity_curve.append({"timestamp":str(ts),"equity":mtm})
+        emit_progress(progress,96,"Closing remaining positions and calculating report")
         # close remaining at final close
         for symbol in list(self.open_trades):
             df=self.frames[symbol]; row=df.iloc[-1]; t=self.open_trades[symbol]
             self._close_qty(t,float(row.close),t.remaining_quantity,"END_OF_TEST"); self._finalize(symbol,row.timestamp)
-        return self.report()
+        report=self.report()
+        emit_progress(progress,100,f"Backtest complete · {report['summary']['trades']} valid trades")
+        return report
 
     def report(self):
         trades=[t.to_dict() for t in self.trades]

@@ -12,6 +12,7 @@
     <nav id="nav">
       <button class="nav active" data-page="overview"><i>◈</i> Overview</button>
       <button class="nav" data-page="backtest"><i>⌁</i> Backtest</button>
+      <button class="nav" data-page="strategies"><i>⌘</i> Strategies</button>
       <button class="nav" data-page="recorder"><i>●</i> Live Recorder</button>
       <button class="nav" data-page="shadow"><i>◇</i> Shadow Trading</button>
       <button class="nav" data-page="integrity"><i>✓</i> Data Integrity</button>
@@ -41,6 +42,17 @@
       </div>
     </section>
 
+    <section class="page" id="page-strategies">
+      <div class="grid2">
+        <article class="panel"><div class="panel-head"><div><span class="eyebrow">RULE BUILDER</span><h3>Strategy versions</h3></div><button class="small" id="strategyReload">Refresh</button></div><div id="strategyVersions" class="check-list muted">Loading versions…</div></article>
+        <article class="panel controls"><div class="panel-head"><div><span class="eyebrow">SAFE DECLARATIVE RULES</span><h3>Draft editor</h3></div><span class="badge">No eval</span></div>
+          <label>Name <input id="draftName" placeholder="LC/v1"/></label><label>Clone base <select id="draftBase"><option>TC</option><option selected>LC</option><option>LSR</option><option>RB</option><option>VB</option><option>TR</option></select></label>
+          <label>Definition <textarea id="draftDefinition" rows="18" spellcheck="false"></textarea></label><div id="draftValidation" class="note">Conditions support nested all/any groups, comparisons, ranges and crosses.</div>
+          <div class="action-row"><button id="validateDraft">Validate</button><button class="primary" id="saveDraft">Save draft</button><button id="publishDraft">Publish immutable version</button></div>
+        </article>
+      </div>
+    </section>
+
     <section class="page" id="page-backtest">
       <div class="grid-form">
         <article class="panel controls">
@@ -51,7 +63,7 @@
           <label>Strategies</label><div class="checks" id="strategyChecks"></div>
           <details><summary>Advanced risk & execution</summary><div class="form2"><label>Risk / trade % <input id="btRisk" type="number" step="0.05" value="0.5"/></label><label>Max open risk % <input id="btMaxRisk" type="number" step="0.25" value="2"/></label><label>Min score <input id="btScore" type="number" value="68"/></label><label>Min separation <input id="btSep" type="number" value="10"/></label><label>Maker fee bps <input id="btMaker" type="number" step="0.1" value="2"/></label><label>Taker fee bps <input id="btTaker" type="number" step="0.1" value="5"/></label></div><label class="inline-check"><input id="btTune" type="checkbox"/> Walk-forward: tune signal thresholds on past folds, then freeze them on future test folds</label></details>
           <div class="action-row"><button class="primary" id="runBacktest">Run backtest</button><button id="runReplay">Replay local L2</button><button id="runWalk">Walk-forward</button></div>
-          <div class="job" id="jobState"><span></span><div><b>Ready</b><small>Select a period and run.</small></div></div>
+          <div class="job" id="jobState"><span></span><div class="job-copy"><div class="job-line"><b>Ready</b><strong id="jobPct">0%</strong></div><small id="jobMsg">Select a period and run.</small><div class="job-progress"><i id="jobProgressBar"></i></div></div></div>
         </article>
         <article class="panel results"><div class="panel-head"><div><span class="eyebrow">RESULTS</span><h3 id="resultTitle">No run selected</h3></div><span class="badge" id="dataModeBadge">—</span></div>
           <div class="metrics" id="metrics"></div><canvas id="equityChart" height="220"></canvas>
@@ -82,7 +94,7 @@
     </section>
 
     <section class="page" id="page-storage">
-      <div class="grid2"><article class="panel"><div class="panel-head"><div><span class="eyebrow">DISK</span><h3>Bulk market data</h3></div><span id="storageLevel" class="badge">—</span></div><div class="disk"><div id="diskBar" class="disk-fill"></div></div><div id="storageDetail"></div></article><article class="panel"><div class="panel-head"><div><span class="eyebrow">RETENTION</span><h3>Raw L2 policy</h3></div></div><p>Raw L2 rotates by policy. Derived features and preserved setup windows are retained longer.</p><button id="prunePreview">Preview retention cleanup</button><pre id="pruneResult" class="code"></pre></article></div>
+      <div class="grid2"><article class="panel"><div class="panel-head"><div><span class="eyebrow">DISK</span><h3>Bulk market data</h3></div><span id="storageLevel" class="badge">—</span></div><div class="disk"><div id="diskBar" class="disk-fill"></div></div><div id="storageDetail"></div><label>Runtime root <input id="runtimePath" placeholder="/srv/scalplab-runtime"/></label><div class="action-row"><button id="runtimeValidate">Validate</button><button class="primary" id="runtimeMigrate">Migrate safely</button></div><pre id="runtimeResult" class="code"></pre></article><article class="panel"><div class="panel-head"><div><span class="eyebrow">RETENTION</span><h3>Raw L2 policy</h3></div></div><p>Raw L2 rotates by policy. Derived features and preserved setup windows are retained longer.</p><button id="prunePreview">Preview retention cleanup</button><pre id="pruneResult" class="code"></pre></article></div>
     </section>
 
     <section class="page" id="page-history"><article class="panel"><div class="panel-head"><div><span class="eyebrow">REPRODUCIBILITY</span><h3>Saved runs</h3></div><button class="small" id="historyRefresh">Refresh</button></div><div id="historyTable" class="table-wrap"></div></article></section>

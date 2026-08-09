@@ -5,6 +5,7 @@ import httpx, websockets
 from scalp.config import AppConfig
 from scalp.live.integrity import IntegrityStore
 from scalp.live.storage_health import StorageManager
+from scalp.runtime import fd_stats
 
 async def _check_ws(url,timeout=5):
     try:
@@ -27,6 +28,7 @@ async def doctor_async(cfg:AppConfig):
     s_ok,s_d=await _check_ws(cfg.live.spot_ws_base+"?streams=btcusdt@aggTrade"); add("Spot WebSocket",s_ok,s_d)
     sm=StorageManager(cfg.storage); status=sm.status(); add("Bulk storage writable",status["bulk"]["free"]>0,status["bulk"]["path"]); add("State storage writable",status["state"]["free"]>0,status["state"]["path"])
     db=IntegrityStore(Path(cfg.storage.state_dir)/"integrity.db"); add("Integrity database",db.path.exists(),str(db.path))
+    fds=fd_stats(); add("File descriptors",fds.get("state")!="CRITICAL",f"{fds.get('open_fds')} open / {fds.get('soft_limit')} soft ({fds.get('state')})")
     # Clock sanity: compare Futures server time if possible is already covered; local UTC monotonicity is a minimum offline check.
     add("System clock",time.time()>1_700_000_000,time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()))
     return {"ok":all(x["ok"] for x in checks),"checks":checks,"storage":status,"recent_gaps":db.recent_gaps(10)}

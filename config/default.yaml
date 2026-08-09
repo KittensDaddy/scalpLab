@@ -60,7 +60,7 @@ live:
   futures_rest_base: https://fapi.binance.com
   spot_rest_base: https://api.binance.com
   symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
-  full_l2_symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+  full_l2_symbols: [BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT]
   depth_levels: 1000
   depth_speed: 100ms
   feature_snapshot_ms: 1000

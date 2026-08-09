@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scalplab"
-version = "0.2.0"
+version = "0.2.2"
 description = "Deterministic Binance USD-M futures research, microstructure recording, replay and shadow platform"
 requires-python = ">=3.11"
 dependencies = [

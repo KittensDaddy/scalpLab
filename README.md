@@ -156,3 +156,13 @@ Binance USD-M aggregate-trade REST history is useful for **recent** restart reco
 ## Walk-forward tuning
 
 The Web UI can run walk-forward with tuning disabled (fixed settings) or enable **past-fold threshold tuning**. In tuned mode only signal thresholds such as minimum strategy score/separation are selected on train/validation folds; the chosen settings are then frozen on the subsequent unseen test fold. Risk-policy limits are not optimized for profit.
+
+## Live progress display
+
+Long finite jobs now expose real progress instead of fixed placeholder stages. CLI backtests, replay, walk-forward and optimization show a percentage bar plus elapsed time. The Web UI shows the same progress and elapsed time while a job runs. Always-on recorder/shadow processes show live heartbeat counters instead of a fake percentage because they do not have a natural 100% completion point.
+
+## Independent recorder service
+
+Run `scalp recorder-daemon` as the long-lived recorder process (the supplied systemd unit does this). Web recorder endpoints now only enqueue persisted start/stop commands and read daemon heartbeats, so restarting or exhausting the Web process does not own or terminate capture sockets. The daemon applies a 16,384 descriptor target and the Web runtime endpoint reports both processes separately.
+
+The dashboard also exposes immutable Futures-universe snapshots, relocatable runtime storage, and draft/validate/publish strategy definitions. Published strategy definitions are immutable and every research request stores its universe snapshot plus resolved strategy version hashes.

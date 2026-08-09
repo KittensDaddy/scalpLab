@@ -65,7 +65,7 @@ class LiveConfig(BaseModel):
     futures_rest_base: str = "https://fapi.binance.com"
     spot_rest_base: str = "https://api.binance.com"
     symbols: list[str] = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-    full_l2_symbols: list[str] = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    full_l2_symbols: list[str] = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]
     depth_levels: int = Field(1000, ge=100, le=1000)
     depth_speed: str = "100ms"
     feature_snapshot_ms: int = Field(1000, ge=100, le=60000)
@@ -105,6 +105,8 @@ class AppConfig(BaseModel):
             raise ValueError(f"Unknown strategies: {sorted(bad)}")
         if not (self.storage.warning_pct < self.storage.pressure_pct < self.storage.emergency_pct):
             raise ValueError("storage thresholds must be warning < pressure < emergency")
+        if len(set(self.live.full_l2_symbols)) > 4:
+            raise ValueError("full_l2_symbols is capped at four")
         return self
 
     def hash(self) -> str:

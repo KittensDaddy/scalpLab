@@ -1,18 +1,51 @@
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const fmt=n=>Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2});
-const pages={overview:['Overview','System status, data quality and research readiness.'],backtest:['Backtest','Historical Binance data, local microstructure replay and walk-forward validation.'],recorder:['Live Recorder','Capture Binance Futures + Spot order flow with explicit integrity tracking.'],shadow:['Shadow Trading','Real market signals, simulated execution, zero live orders.'],integrity:['Data Integrity','Gaps, sessions and source provenance are first-class research data.'],storage:['Storage','Protect the system disk and rotate high-volume raw L2 safely.'],history:['Run History','Reproducible saved research runs.']};
+const pages={overview:['Overview','System status, data quality and research readiness.'],backtest:['Backtest','Historical Binance data, local microstructure replay and walk-forward validation.'],strategies:['Strategies','Build, validate, test and publish immutable declarative rules.'],recorder:['Live Recorder','Capture Binance Futures + Spot order flow with explicit integrity tracking.'],shadow:['Shadow Trading','Real market signals, simulated execution, zero live orders.'],integrity:['Data Integrity','Gaps, sessions and source provenance are first-class research data.'],storage:['Storage','Protect the system disk and rotate high-volume raw L2 safely.'],history:['Run History','Reproducible saved research runs.']};
 $$('.nav').forEach(b=>b.onclick=()=>{ $$('.nav').forEach(x=>x.classList.remove('active')); b.classList.add('active'); $$('.page').forEach(x=>x.classList.remove('active')); $('#page-'+b.dataset.page).classList.add('active'); $('#pageTitle').textContent=pages[b.dataset.page][0]; $('#pageSub').textContent=pages[b.dataset.page][1]; refreshPage(b.dataset.page); });
 const strats=[['TC','Trend Continue'],['LC','Liquidity Cascade'],['LSR','Sweep Reversal'],['RB','Range Mean Rev'],['VB','Vol Breakout'],['TR','Trend Reversal']];
 $('#overviewStrategies').innerHTML=strats.map(x=>`<div class="strategy-chip"><b>${x[0]}</b><small>${x[1]}</small></div>`).join('');
 $('#strategyChecks').innerHTML=strats.map(x=>`<label><input type="checkbox" checked value="${x[0]}">${x[0]}</label>`).join('');
+const ruleTemplate={long:{conditions:{all:[{field:'close',op:'gt',other_field:'ema_fast'}]},score:[{when:{field:'rsi',op:'gt',value:50},weight:25,evidence_family:'momentum'}],trade:{stop_anchor:'low',atr_offset:1,target_r:2,urgency:50,minimum_expected_r:1.15}},short:{conditions:{all:[{field:'close',op:'lt',other_field:'ema_fast'}]},score:[{when:{field:'rsi',op:'lt',value:50},weight:25,evidence_family:'momentum'}],trade:{stop_anchor:'high',atr_offset:1,target_r:2,urgency:50,minimum_expected_r:1.15}}};
+$('#draftDefinition').value=JSON.stringify(ruleTemplate,null,2); let activeDraft=null;
+async function loadStrategies(){let r=await api('/api/strategies');$('#strategyVersions').innerHTML=r.strategies.map(x=>`<div class="check-item"><span><b>${x.name}</b><small> ${x.status} · r${x.revision}${x.archived?' · archived':''}</small></span><b>${x.protected?'BUILT-IN':(x.hash||'DRAFT').slice(0,10)}</b></div>`).join('')}
+$('#strategyReload').onclick=loadStrategies; $('#validateDraft').onclick=async()=>{try{let definition=JSON.parse($('#draftDefinition').value),r=await api('/api/strategies/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({definition})});$('#draftValidation').textContent=r.valid?`Valid · needs ${r.requirements.join(', ')||'no data'}`:r.errors.join(' · ')}catch(e){$('#draftValidation').textContent=String(e)}};
+$('#saveDraft').onclick=async()=>{let definition=JSON.parse($('#draftDefinition').value),r=await api('/api/strategies/drafts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('#draftName').value,base_revision:$('#draftBase').value+'-r1',definition})});activeDraft=r.id;await loadStrategies()};
+$('#publishDraft').onclick=async()=>{if(!activeDraft)return alert('Save the draft first.');await api(`/api/strategies/${activeDraft}/publish`,{method:'POST'});await loadStrategies()};
 function setDates(){let e=new Date(),s=new Date(e-14*864e5); const local=d=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16); $('#btEnd').value=local(e);$('#btStart').value=local(s)} setDates();
-async function api(url,opt){let r=await fetch(url,opt); if(!r.ok) throw new Error(await r.text()); return r.json()}
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function api(url,opt={}){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),10000);
+  try{
+    let r=await fetch(url,{...opt,signal:controller.signal});
+    if(!r.ok) throw new Error(await r.text());
+    return await r.json();
+  } finally { clearTimeout(timeout); }
+}
 async function checkApi(){try{let x=await api('/api/health');$('#apiStatus').textContent=`API ${x.version} · no live orders`; }catch(e){$('#apiStatus').textContent='API offline'}}
 function btPayload(){return{symbols:$('#btSymbols').value.split(',').map(x=>x.trim().toUpperCase()).filter(Boolean),interval:$('#btInterval').value,start_time:new Date($('#btStart').value).toISOString(),end_time:new Date($('#btEnd').value).toISOString(),strategies:$$('#strategyChecks input:checked').map(x=>x.value),initial_equity:+$('#btEquity').value,risk_pct:+$('#btRisk').value,max_open_risk_pct:+$('#btMaxRisk').value,min_score:+$('#btScore').value,min_separation:+$('#btSep').value,maker_fee_bps:+$('#btMaker').value,taker_fee_bps:+$('#btTaker').value,walkforward_tune:$('#btTune').checked}}
-async function launch(kind){let ep=kind==='backtest'?'/api/backtests':kind==='replay'?'/api/replay':'/api/walkforward'; $('#jobState').classList.add('running');$('#jobState b').textContent='Starting';$('#jobState small').textContent=kind;try{let j=await api(ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(btPayload())});poll(j.job_id)}catch(e){jobErr(e)}}
+async function launch(kind){let ep=kind==='backtest'?'/api/backtests':kind==='replay'?'/api/replay':'/api/walkforward'; $('#jobState').classList.add('running');$('#jobState b').textContent='RUNNING';$('#jobPct').textContent='0%';$('#jobProgressBar').style.width='0%';$('#jobMsg').textContent='Starting '+kind;try{let j=await api(ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(btPayload())});poll(j.job_id)}catch(e){jobErr(e)}}
 $('#runBacktest').onclick=()=>launch('backtest');$('#runReplay').onclick=()=>launch('replay');$('#runWalk').onclick=()=>launch('walkforward');
-async function poll(id){let t=setInterval(async()=>{let j=await api('/api/jobs/'+id);$('#jobState b').textContent=j.status;$('#jobState small').textContent=j.message||j.error||`${j.progress||0}%`;if(j.status==='DONE'||j.status==='ERROR'){clearInterval(t);$('#jobState').classList.remove('running'); if(j.status==='DONE')renderReport(j.report);else jobErr(j.error)}},700)}
-function jobErr(e){$('#jobState b').textContent='Error';$('#jobState small').textContent=String(e);$('#jobState').classList.remove('running')}
+let jobPollGeneration=0;
+async function poll(id){
+  const generation=++jobPollGeneration;
+  while(generation===jobPollGeneration){
+    try{
+      let j=await api('/api/jobs/'+id),p=Math.max(0,Math.min(100,+j.progress||0)),elapsed=j.started_at?Math.max(0,Math.floor(Date.now()/1000-j.started_at)):0,mm=String(Math.floor(elapsed/60)).padStart(2,'0'),ss=String(elapsed%60).padStart(2,'0');
+      $('#jobState b').textContent=j.status;$('#jobPct').textContent=`${p.toFixed(p<10?1:0)}%`;$('#jobProgressBar').style.width=`${p}%`;$('#jobMsg').textContent=`${j.message||j.error||'Working'} · ${mm}:${ss}`;
+      if(j.status==='DONE'||j.status==='ERROR'){
+        $('#jobState').classList.remove('running');
+        if(j.status==='DONE'){ $('#jobPct').textContent='100%';$('#jobProgressBar').style.width='100%';renderReport(j.report)}else jobErr(j.error);
+        return;
+      }
+    }catch(e){
+      if(generation!==jobPollGeneration)return;
+      $('#jobMsg').textContent=`Progress connection retrying: ${e.name==='AbortError'?'request timed out':e}`;
+    }
+    await sleep(750);
+  }
+}
+function jobErr(e){$('#jobState b').textContent='Error';$('#jobPct').textContent='—';$('#jobMsg').textContent=String(e);$('#jobState').classList.remove('running')}
 let lastReport=null, resultPanel='strategy';
 function renderReport(r){lastReport=r;let s=r.summary||{},wf=Array.isArray(r.folds);$('#resultTitle').textContent=wf?`${s.folds||0} walk-forward folds`:`${s.trades||0} valid trades`;$('#dataModeBadge').textContent=s.data_mode||'MULTI-FOLD';let items=wf?[['OOS P&L',fmt(s.net_pnl)],['OOS trades',fmt(s.trades)],['Win rate',`${fmt(s.win_rate)}%`],['Positive folds',`${fmt(s.positive_folds_pct)}%`],['Median PF',fmt(s.median_profit_factor)],['Worst fold DD',`${fmt(s.max_fold_drawdown_pct)}%`]]:[['Return',`${fmt(s.return_pct)}%`],['Net P&L',fmt(s.net_pnl)],['Valid P&L',fmt(s.valid_trade_net_pnl)],['Win rate',`${fmt(s.win_rate)}%`],['Profit factor',fmt(s.profit_factor)],['Max DD',`${fmt(s.max_drawdown_pct)}%`],['Fees',fmt(s.fees)],['Gap-invalid',fmt(s.invalid_gap_trades)]];$('#metrics').innerHTML=items.map(x=>`<div class="metric"><small>${x[0]}</small><b>${x[1]}</b></div>`).join('');drawEquity(r.equity_curve||[]);if(wf)resultPanel='folds';renderResultTable()}
 function drawEquity(rows){let c=$('#equityChart'),dpr=devicePixelRatio||1,w=c.clientWidth||700,h=220;c.width=w*dpr;c.height=h*dpr;let x=c.getContext('2d');x.scale(dpr,dpr);x.clearRect(0,0,w,h);if(rows.length<2)return;let v=rows.map(r=>+r.equity),mn=Math.min(...v),mx=Math.max(...v),pad=18;x.strokeStyle='#1e2934';for(let i=1;i<5;i++){let y=h*i/5;x.beginPath();x.moveTo(0,y);x.lineTo(w,y);x.stroke()}x.strokeStyle='#72f1b8';x.lineWidth=1.7;x.beginPath();v.forEach((a,i)=>{let px=i/(v.length-1)*w,py=h-pad-(a-mn)/(mx-mn||1)*(h-pad*2);i?x.lineTo(px,py):x.moveTo(px,py)});x.stroke()}
@@ -24,10 +57,24 @@ $('#recStart').onclick=async()=>{await api('/api/recorder/start',{method:'POST',
 async function integrity(){let r=await api('/api/data-integrity'),g=r.gaps||[],f=r.latest_features||{};$('#ovGaps').textContent=g.length;$('#ovBook').textContent=Object.values(f).some(x=>x.quality==='HEALTHY')?'HEALTHY':'NO DATA';$('#featureCards').innerHTML=Object.keys(f).length?Object.entries(f).map(([s,x])=>{let z=x.feature||{};return`<div class="feature-card"><h4>${s} <span class="badge ${x.quality==='HEALTHY'?'good':''}">${x.quality}</span></h4><dl><dt>Spread</dt><dd>${fmt(z.spread_bps)} bps</dd><dt>OFI</dt><dd>${fmt(z.ofi)}</dd><dt>CVD Δ</dt><dd>${fmt(z.cvd_delta)}</dd><dt>Depth imb.</dt><dd>${fmt(z.depth_imbalance)}</dd><dt>Micro Δ</dt><dd>${fmt(z.microprice_change_bps)} bps</dd><dt>OI Δ</dt><dd>${fmt((z.oi_delta||0)*100)}%</dd></dl></div>`}).join(''):'No live features yet.';$('#integritySummary').innerHTML=`<div><small>Last session</small><b>${r.last_session?.status||'NONE'}</b></div><div><small>Gaps</small><b>${g.length}</b></div><div><small>Live symbols</small><b>${Object.keys(f).length}</b></div><div><small>Storage state</small><b>${r.storage?.level||'—'}</b></div>`;$('#gapTable').innerHTML=`<table><tr><th>Start</th><th>End</th><th>Reason</th><th>Symbol</th><th>Stream</th><th>Repair</th></tr>${g.map(x=>`<tr><td>${new Date(x.start_ts).toLocaleString()}</td><td>${x.end_ts?new Date(x.end_ts).toLocaleString():'OPEN'}</td><td>${x.reason}</td><td>${x.symbol||'—'}</td><td>${x.stream||'—'}</td><td>${x.repaired_source||'—'}</td></tr>`).join('')}</table>`;return r}
 async function storage(){let r=await api('/api/storage'),b=r.bulk;$('#storageLevel').textContent=r.level;$('#diskBar').style.width=Math.min(100,b.used_pct)+'%';$('#storageDetail').innerHTML=`<div class="metrics"><div class="metric"><small>Used</small><b>${fmt(b.used/1e9)} GB</b></div><div class="metric"><small>Free</small><b>${fmt(b.free/1e9)} GB</b></div><div class="metric"><small>7d avg</small><b>${fmt((r.usage?.avg_bytes_per_day_7d||0)/1e9)} GB/d</b></div><div class="metric"><small>Days left</small><b>${r.usage?.estimated_days_until_full?fmt(r.usage.estimated_days_until_full):'—'}</b></div></div>`;$('#ovStorage').textContent=`${fmt(b.used_pct)}%`;let days=r.usage?.estimated_days_until_full;$('#ovStorageSub').textContent=days?`${fmt(days)} days est. · ${fmt(b.free/1e9)} GB free`:`${fmt(b.free/1e9)} GB free`;return r}
 $('#prunePreview').onclick=async()=>{$('#pruneResult').textContent=JSON.stringify(await api('/api/storage/prune?dry_run=true',{method:'POST'}),null,2)};
+async function runtimeSettings(){let r=await api('/api/settings/storage');$('#runtimePath').value=r.runtime_root}
+$('#runtimeValidate').onclick=async()=>{$('#runtimeResult').textContent=JSON.stringify(await api('/api/settings/storage/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:$('#runtimePath').value})}),null,2)};
+$('#runtimeMigrate').onclick=async()=>{if(!confirm('All producing jobs must be stopped. Keep the old root as a recovery copy and migrate?'))return;$('#runtimeResult').textContent=JSON.stringify(await api('/api/settings/storage/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:$('#runtimePath').value})}),null,2)};
 async function shadowStatus(){let r=await api('/api/shadow/status');$('#shadowBadge').textContent=r.running?'RUNNING':'STOPPED';$('#shadowBadge').className='badge '+(r.running?'good':'');$('#shadowTable').innerHTML=`<table><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Strategy</th><th>Score</th><th>Mode</th><th>Status</th></tr>${(r.recent||[]).map(x=>`<tr><td>${new Date(x.ts).toLocaleString()}</td><td>${x.symbol}</td><td>${x.direction}</td><td>${x.strategy}</td><td>${fmt(x.score)}</td><td>${x.mode}</td><td>${x.status}</td></tr>`).join('')}</table>`}
 $('#shadowStart').onclick=async()=>{await api('/api/shadow/start',{method:'POST'});setTimeout(shadowStatus,500)};$('#shadowStop').onclick=async()=>{await api('/api/shadow/stop',{method:'POST'});setTimeout(shadowStatus,500)};
 async function doctor(){let r=await api('/api/doctor');$('#doctorList').innerHTML=(r.checks||[]).map(x=>`<div class="check-item"><span>${x.name}<small class="muted"> ${x.detail||''}</small></span><b class="${x.ok?'good':'bad'}">${x.ok?'PASS':'FAIL'}</b></div>`).join('')} $('#doctorBtn').onclick=doctor;
 async function history(){let r=await api('/api/runs');$('#historyTable').innerHTML=`<table><tr><th>Run</th><th>Created</th><th>Symbols</th><th>Interval</th><th>Return</th><th>Trades</th></tr>${(r.runs||[]).map(x=>`<tr><td>${x.id}</td><td>${x.created_at.slice(0,19)}</td><td>${(x.symbols||[]).join(', ')}</td><td>${x.interval}</td><td>${fmt(x.summary?.return_pct)}%</td><td>${x.summary?.trades||0}</td></tr>`).join('')}</table>`}
 $('#historyRefresh').onclick=history;$('#integrityRefresh').onclick=integrity;$('#refreshAll').onclick=()=>refreshPage($('.nav.active').dataset.page);
 async function refreshPage(p){try{if(p==='overview')await Promise.all([recStatus(),integrity(),storage()]);if(p==='recorder')await Promise.all([recStatus(),integrity()]);if(p==='shadow')await shadowStatus();if(p==='integrity')await integrity();if(p==='storage')await storage();if(p==='history')await history()}catch(e){console.error(e)}}
-checkApi();refreshPage('overview');setInterval(()=>{if($('.nav.active').dataset.page==='recorder')refreshPage('recorder')},3000);
+const oldRefreshPage=refreshPage; refreshPage=async p=>{await oldRefreshPage(p);if(p==='strategies')await loadStrategies();if(p==='storage')await runtimeSettings()};
+checkApi();refreshPage('overview');
+let recorderRefreshRunning=false;
+async function recorderRefreshLoop(){
+  while(true){
+    await sleep(3000);
+    if($('.nav.active').dataset.page!=='recorder'||recorderRefreshRunning)continue;
+    recorderRefreshRunning=true;
+    try{await refreshPage('recorder')}finally{recorderRefreshRunning=false}
+  }
+}
+recorderRefreshLoop();
